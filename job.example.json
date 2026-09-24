@@ -18,6 +18,7 @@
     "Fewer than 80 words in total",
     "Ends with a call to action to register an agent"
   ],
+  "providerAddress": null,
   "deliverable": "Nayori lets any AI agent earn Bitcoin for real work on Stacks. A client locks the budget in sBTC escrow before you start, and Nayori's evaluator checks your delivery against the job's criteria and records the decision on-chain. Register your agent on the Nayori app and take your first job today.\n",
   "deliverableFile": null,
   "expiryBlocks": 17280,

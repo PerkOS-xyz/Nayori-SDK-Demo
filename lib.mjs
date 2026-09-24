@@ -407,7 +407,48 @@ export function sip018Hash(message) {
   const bytes = new Uint8Array(prefix.length + len.length + body.length); bytes.set(prefix, 0); bytes.set(len, prefix.length); bytes.set(body, prefix.length + len.length);
   return createHash("sha256").update(bytes).digest("hex");
 }
-export async function attest(name, { handle, roles, kind = "independent-developer", links = {} }) {
+export const KINDS = ["independent-developer", "ecosystem-team", "community-member"];
+/** What Nayori already lists for this wallet (public directory), so the wizard can prefill and the dev can edit. */
+export async function listedParticipant(address) {
+  try {
+    const r = await fetch(`${P.app}/api/participants.json`, { signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.participants?.find((p) => p.wallet?.address?.toUpperCase() === address.toUpperCase()) ?? null;
+  } catch { return null; }
+}
+/** One readline session for a whole wizard; lines are queued so piped input (scripts, CI) works like a TTY. */
+function session() {
+  const rl = createInterface({ input: stdin, output: stdout, terminal: stdin.isTTY });
+  const lines = []; const waiting = []; let closed = false;
+  rl.on("line", (l) => { const w = waiting.shift(); w ? w(l) : lines.push(l); });
+  rl.on("close", () => { closed = true; for (const w of waiting.splice(0)) w(""); });
+  const ask = (q) => new Promise((resolve) => { stdout.write(q); if (lines.length) return resolve(lines.shift().trim()); if (closed) return resolve(""); waiting.push((l) => resolve(l.trim())); });
+  return { ask, close: () => rl.close() };
+}
+/** Interactive registration: asks for everything, prefilled with what is already listed. Returns the answers. */
+export async function attestWizard(name) {
+  const address = readWalletAddress(name);
+  const listed = await listedParticipant(address);
+  console.log(`\nRegister yourself on Nayori as the operator of wallet "${name}" (${address})`);
+  console.log(listed ? `  already listed as "${listed.handle}"; press Enter to keep a value, type to change it\n` : `  not listed yet; press Enter to accept a default\n`);
+  const { ask, close } = session();
+  try {
+  const handle = (await ask(`Handle, your GitHub or X name (${listed?.handle ?? "required"}): `)) || listed?.handle;
+  const kind = (await ask(`Kind [${KINDS.join(", ")}] (${listed?.kind ?? "independent-developer"}): `)) || listed?.kind || "independent-developer";
+  const roles = ((await ask(`Roles this wallet plays, comma-separated [${ROLES.join(", ")}] (${(listed?.wallet?.roles ?? ["agent-owner", "provider"]).join(",")}): `)) || (listed?.wallet?.roles ?? ["agent-owner", "provider"]).join(",")).split(",").map((r) => r.trim()).filter(Boolean);
+  const links = {};
+  for (const k of ["github", "x", "website"]) {
+    const v = (await ask(`${k} URL${listed?.links?.[k] ? ` (${listed.links[k]})` : " (optional)"}: `)) || listed?.links?.[k];
+    if (v) links[k] = v;
+  }
+  const organization = (await ask(`Organization${listed?.organization ? ` (${listed.organization})` : " (optional)"}: `)) || listed?.organization;
+  const notes = (await ask(`One line about what you build${listed?.notes ? ` (${listed.notes})` : " (optional)"}: `)) || listed?.notes;
+  return { handle, kind, roles, links, organization, notes, listed: Boolean(listed) };
+  } finally { close(); }
+}
+export async function attest(name, { handle, roles, kind = "independent-developer", links = {}, organization, notes }) {
+  if (!KINDS.includes(kind)) throw new Error(`kind: one of ${KINDS.join(", ")}`);
   if (!/^[A-Za-z0-9._-]{2,40}$/.test(handle ?? "")) throw new Error("--handle: 2 to 40 characters, letters, digits, dot, dash or underscore");
   for (const r of roles) if (!ROLES.includes(r)) throw new Error(`--roles: use a comma-separated subset of ${ROLES.join(", ")}`);
   const address = readWalletAddress(name);
@@ -422,5 +463,5 @@ export async function attest(name, { handle, roles, kind = "independent-develope
   if (publicKeyFromSignatureRsv(hash, signature).toLowerCase() !== publicKey.toLowerCase() || getAddressFromPrivateKey(await provider(), NETWORK) !== address) throw new Error("self-check failed");
   const agentIds = []; const n = await reader.getAgentCount();
   for (let id = n; id >= 1n; id--) { const a = await reader.getAgent(id).catch(() => null); if (a && a.wallet === address) agentIds.push(Number(id)); }
-  return { handle, kind, ...(Object.keys(links).length ? { links } : {}), wallet: { address, roles }, agentIds: agentIds.sort((a, b) => a - b), attestation: { message, signature, publicKey, signedAt: new Date().toISOString() } };
+  return { handle, kind, ...(organization ? { organization } : {}), ...(Object.keys(links).length ? { links } : {}), wallet: { address, roles }, agentIds: agentIds.sort((a, b) => a - b), attestation: { message, signature, publicKey, signedAt: new Date().toISOString() }, ...(notes ? { notes } : {}) };
 }

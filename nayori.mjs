@@ -13,8 +13,8 @@
 //   nayori finalize   --wallet <any>    --job <id>            # after the appeal window
 //   nayori status     --job <id>
 //   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
-//   nayori attest     --wallet <name>   --handle <you> --roles client,provider,agent-owner
-//                                                                       # register yourself: sign the participant attestation
+//   nayori attest     --wallet <name>   [--handle <you> --roles client,provider,agent-owner]
+//                                     # register yourself: a short wizard, then the wallet signs the attestation
 //
 // Wallets live in ~/.nayori/wallets/<name>.env (mode 0600). Keys are read only when signing.
 // NAYORI_NETWORK=testnet switches every command to the QA contracts.
@@ -156,17 +156,23 @@ async function main() {
     }
     case "attest": {
       const wallet = needWallet();
-      const roles = (flag("--roles") ?? "agent-owner").split(",").map((r) => r.trim()).filter(Boolean);
-      const links = {}; for (const k of ["github", "x", "website"]) if (flag(`--${k}`)) links[k] = flag(`--${k}`);
-      const entry = await N.attest(wallet, { handle: flag("--handle"), roles, kind: flag("--kind") ?? "independent-developer", links });
       const { mkdirSync, writeFileSync } = await import("node:fs");
+      // Wizard by default (prefilled with what Nayori already lists for this wallet); flags skip the questions.
+      const answers = flag("--handle")
+        ? { handle: flag("--handle"), roles: (flag("--roles") ?? "agent-owner").split(",").map((r) => r.trim()).filter(Boolean), kind: flag("--kind") ?? "independent-developer",
+            links: Object.fromEntries(["github", "x", "website"].filter((k) => flag(`--${k}`)).map((k) => [k, flag(`--${k}`)])), organization: flag("--organization"), notes: flag("--notes") }
+        : await N.attestWizard(wallet);
+      const entry = await N.attest(wallet, answers);
       mkdirSync(OUT, { recursive: true });
       const file = join(OUT, `attestation-${wallet}.json`);
       writeFileSync(file, JSON.stringify(entry, null, 2) + "\n");
-      console.log(JSON.stringify(entry, null, 2));
-      N.say(`saved to ${file}`, "Send this JSON to Nayori: a pull request adding it to App/src/constants/participants.ts in",
-        "github.com/PerkOS-xyz/PerkOS-Nayori, or a DM to @PerkOS_NayoriAI. Once merged, this wallet is listed as",
-        `independent at ${N.P.app}/participants and its agents and jobs count on nayori.ai/evidence.`);
+      console.log(`\n  signed by ${entry.wallet.address} as "${entry.handle}" (${entry.kind}; roles ${entry.wallet.roles.join(", ")})`);
+      console.log(`  agents this wallet owns on-chain: ${entry.agentIds.length ? entry.agentIds.map((id) => "#" + id).join(", ") : "none yet"}`);
+      console.log(`  saved       ${file}`);
+      console.log(`\n  Send this file to Nayori: a pull request adding it to App/src/constants/participants.ts in`);
+      console.log(`  github.com/PerkOS-xyz/PerkOS-Nayori, or a DM to @PerkOS_NayoriAI. Once listed, this wallet appears as`);
+      console.log(`  independent at ${N.P.app}/participants and its agents and jobs count on nayori.ai/evidence.`);
+      console.log(`  To change anything later, run "nayori attest --wallet ${wallet}" again: it prefills what is listed and you re-sign.`);
       return;
     }
     case "finalize": { const wallet = needWallet(); const jobId = needJob(); await N.finalize(N.actor(wallet), jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }

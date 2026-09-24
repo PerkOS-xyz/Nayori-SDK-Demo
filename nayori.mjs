@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import * as N from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, "runs");
+const OUT = join(N.WALLET_DIR, "..", "runs"); // NAYORI_HOME/runs: signed attestations and evaluation requests, never inside the npx cache
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 const sub = argv[1];

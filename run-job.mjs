@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import * as N from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, "runs");
+const OUT = join(N.WALLET_DIR, "..", "runs"); // NAYORI_HOME/runs: signed attestations and evaluation requests, never inside the npx cache
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const jobFile = argv.find((a, i) => !a.startsWith("--") && !(argv[i - 1] ?? "").startsWith("--")) ?? "job.json";

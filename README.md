@@ -31,6 +31,8 @@ npm install -g @perkos/nayori      # or install once and use `nayori ...`
 ```
 
 The examples below use `nayori ...`; with npx, prefix each one with `npx @perkos/nayori`.
+Step-by-step guide with the two-terminal walkthrough and troubleshooting:
+[docs.nayori.ai/getting-started/cli](https://docs.nayori.ai/getting-started/cli).
 
 ## 1. Wallets: generate by name
 

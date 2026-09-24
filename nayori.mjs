@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Nayori CLI (npx @perkos/nayori). One command per step, one named wallet per role (or per agent).
 //
-//   nayori wallet create [name]                 # new wallet: 24 secret words + key, saved under a name (random if omitted)
+//   nayori wallet generate [name]               # new wallet: 24 secret words + key, saved under a name (random if omitted)
 //   nayori wallet import [name] [--account N]   # an existing wallet, from its secret words (hidden prompt)
 //   nayori wallet list | show <name>            # every wallet created or imported here, with balances
 //
@@ -41,9 +41,9 @@ async function main() {
   console.log(`Nayori SDK demo  |  @perkos/agent-sdk  |  Stacks ${N.NETWORK}  |  ${new Date().toISOString().slice(0, 16)}Z`);
   switch (cmd) {
     case "wallet": {
-      if (sub === "create") {
+      if (sub === "generate" || sub === "create") {
         const w = await N.createWallet(positional[1]);
-        console.log(`\nCreated wallet "${w.name}" on Stacks ${w.network}\n`);
+        console.log(`\nGenerated wallet "${w.name}" on Stacks ${w.network}\n`);
         console.log(`  address      ${w.address}`);
         console.log(`  key file     ${w.path}`);
         console.log(`  secret words ${w.wordsPath}`);
@@ -69,7 +69,7 @@ async function main() {
       }
       if (sub === "list") {
         const list = N.listWallets();
-        if (list.length === 0) { console.log(`no wallets in ${N.WALLET_DIR}. Create one: nayori wallet create [name]`); return; }
+        if (list.length === 0) { console.log(`no wallets in ${N.WALLET_DIR}. Generate one: nayori wallet generate [name]`); return; }
         console.log(`\n  ${"name".padEnd(18)} ${"address".padEnd(42)} ${"source".padEnd(9)} ${"created".padEnd(11)} balances`);
         for (const w of list) {
           const b = await N.balances(w.address).catch(() => null);

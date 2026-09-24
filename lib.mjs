@@ -92,7 +92,7 @@ export async function createWallet(name) {
   walletPath(name); // validate the name before generating anything
   const words = generateSecretKey(256);
   const w = await generateWallet({ secretKey: words, password: "" });
-  const info = writeWallet(name, w.accounts[0].stxPrivateKey, { source: "created" });
+  const info = writeWallet(name, w.accounts[0].stxPrivateKey, { source: "generated" });
   const wordsPath = join(WALLET_DIR, `${name}.words`);
   writeSecret(wordsPath, words + "\n");
   return { ...info, words, wordsPath };
@@ -111,7 +111,7 @@ export async function importWallet(name, accountIndex = 0) {
 }
 export function readWalletAddress(name) {
   const path = walletPath(name);
-  if (!existsSync(path)) throw new Error(`wallet "${name}" not found. Create one: nayori wallet create ${name}   (or import: nayori wallet import ${name})`);
+  if (!existsSync(path)) throw new Error(`wallet "${name}" not found. Generate one: nayori wallet generate ${name}   (or import: nayori wallet import ${name})`);
   const m = readFileSync(path, "utf8").match(/^AGENT_ADDRESS=([A-Z0-9]+)$/m);
   if (!m) throw new Error(`${path}: AGENT_ADDRESS not found`);
   return m[1];

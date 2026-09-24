@@ -89,9 +89,12 @@ function actor(envVar, spendingPolicy) {
 }
 async function confirmed(nayori, receipt, label) {
   say(`${label} broadcast, waiting for the Stacks block...`);
-  const c = await nayori.confirm(receipt, { timeoutMs: 20 * 60_000, pollIntervalMs: 15_000 });
-  if (c.status !== "success") throw new Error(`${label} did not succeed: ${c.status} ${c.result ?? ""}`);
+  const c = await nayori.confirm(receipt, { timeoutMs: 15 * 60_000, pollIntervalMs: 15_000 });
+  if (c.status !== "success") {
+    throw new Error(`${label} did not succeed: ${c.status} ${c.result ?? ""}. Re-run with resumeJobId: the script continues from the live state.`);
+  }
   record(label, receipt.txid);
+  await sleep(10_000); // let the API observe the new nonce before the same wallet signs again
   return c;
 }
 
@@ -146,13 +149,14 @@ async function main() {
   });
   say("task and criteria go on-chain in the description, with their commitment:", ...prepared.description.split("\n").map((l) => `  ${l}`));
   let jobId;
+  let onChain;
   if (job.resumeJobId) {
-    // Resume a job this client already created and budgeted (for example after an interrupted run).
+    // Resume a job this client already created (for example after an interrupted run): every
+    // step below checks the live state first and only signs what is still missing.
     jobId = BigInt(job.resumeJobId);
-    const existing = await client.getJob(ASSET, jobId);
-    if (!existing || existing.client !== clientAddress || existing.description !== prepared.description) throw new Error(`job #${jobId} is not this client's job with these criteria`);
-    if (existing.statusCode !== 0n || existing.budget !== BUDGET_SATS) throw new Error(`job #${jobId} is ${existing.status} with budget ${existing.budget}; resume expects open with budget ${BUDGET_SATS}`);
-    say(`resuming job #${jobId}: created and budgeted earlier by this client (resumeJobId)`);
+    onChain = await client.getJob(ASSET, jobId);
+    if (!onChain || onChain.client !== clientAddress || onChain.description !== prepared.description) throw new Error(`job #${jobId} is not this client's job with these criteria`);
+    say(`resuming job #${jobId}: currently ${onChain.status}, budget ${onChain.budget} sats`);
   } else {
     const tip = await fetch(`${P.hiro}/extended/v1/block?limit=1`).then((r) => r.json());
     const expiredAt = BigInt(tip.results[0].height) + BigInt(job.expiryBlocks ?? 17280); // 24 h at 5 s/block, app convention
@@ -160,22 +164,37 @@ async function main() {
     await confirmed(client, created, "create-job");
     jobId = await client.getJobCount(ASSET);
     say(`job #${jobId} created`);
-    const budgeted = await client.setBudget({ asset: ASSET, jobId, amount: BUDGET_SATS });
-    await confirmed(client, budgeted, "set-budget");
+    onChain = await client.getJob(ASSET, jobId);
   }
   const fee = await client.getJobServiceFee(ASSET, jobId);
   const acceptance = { gross: BUDGET_SATS, basisPoints: 200, treasury: fee.treasury, rejectionRefund: "net-after-evaluation" };
   const feeSats = BUDGET_SATS * 200n / 10000n;
-  say(`gross ${BUDGET_SATS} sats; on approval the provider receives ${BUDGET_SATS - feeSats}, the treasury ${feeSats}`);
-  const funded = await client.fundJob({ asset: ASSET, jobId, amount: BUDGET_SATS, serviceFeeAcceptance: acceptance });
-  await confirmed(client, funded, "fund-job");
+  if (onChain.statusCode === 0n) {
+    if (onChain.budget !== BUDGET_SATS) {
+      const budgeted = await client.setBudget({ asset: ASSET, jobId, amount: BUDGET_SATS });
+      await confirmed(client, budgeted, "set-budget");
+    }
+    say(`gross ${BUDGET_SATS} sats; on approval the provider receives ${BUDGET_SATS - feeSats}, the treasury ${feeSats}`);
+    const funded = await client.fundJob({ asset: ASSET, jobId, amount: BUDGET_SATS, serviceFeeAcceptance: acceptance });
+    await confirmed(client, funded, "fund-job");
+    onChain = await client.getJob(ASSET, jobId);
+  } else {
+    say(`already funded: gross ${onChain.budget} sats; on approval the provider receives ${BUDGET_SATS - feeSats}, the treasury ${feeSats}`);
+  }
   say(`escrow locked: ${await client.getEscrowBalance(ASSET, jobId)} sats`);
   await sleep(2000);
 
   step("4/6  HIRE THE PROVIDER. Client wallet assigns the provider's wallet.");
   say("(In the web app, agents can also apply to an open job and the client picks one.)");
-  const assigned = await client.assignProvider({ asset: ASSET, jobId, provider: providerAddress });
-  await confirmed(client, assigned, "assign-provider");
+  if (onChain.statusCode === 1n && !onChain.provider) {
+    const assigned = await client.assignProvider({ asset: ASSET, jobId, provider: providerAddress });
+    await confirmed(client, assigned, "assign-provider");
+    onChain = await client.getJob(ASSET, jobId);
+  } else if (onChain.provider && onChain.provider !== providerAddress) {
+    throw new Error(`job #${jobId} is assigned to ${onChain.provider}, not to this provider`);
+  } else {
+    say(`already assigned to ${onChain.provider}`);
+  }
   await sleep(2000);
 
   step("5/6  DELIVER. The provider publishes its work and commits its hash on-chain.");
@@ -200,13 +219,21 @@ async function main() {
     evaluator: EVALUATOR, description: plainDescription(job.task, job.criteria), acceptanceCriteria: toAcceptanceCriteria(job.criteria), evidence,
   });
   if (submission.criteriaHash !== prepared.criteriaHash) throw new Error("criteria commitment mismatch");
+  const deliverableHex = Array.from(submission.deliverable, (b) => b.toString(16).padStart(2, "0")).join("");
   say(`evidence commitment ny1:${submission.evidenceHash.slice(0, 16)}… (36 bytes on-chain; the text itself stays off-chain)`);
-  const submitted = await provider.submitWork({ asset: ASSET, jobId, deliverable: submission.deliverable, serviceFeeAcceptance: acceptance });
-  await confirmed(provider, submitted, "submit-work");
+  if (onChain.statusCode === 1n) {
+    const submitted = await provider.submitWork({ asset: ASSET, jobId, deliverable: submission.deliverable, serviceFeeAcceptance: acceptance });
+    await confirmed(provider, submitted, "submit-work");
+    onChain = await client.getJob(ASSET, jobId);
+  } else if (String(onChain.deliverable ?? "").replace(/^0x/, "").toLowerCase().startsWith(deliverableHex)) {
+    say("already submitted with this exact evidence commitment");
+  } else {
+    throw new Error(`job #${jobId} is ${onChain.status} with a different deliverable; use the evidence that was submitted`);
+  }
   await sleep(2000);
 
   step("6/6  ASK NAYORI'S EVALUATOR. No key, no signature: it recomputes every hash against the chain.");
-  const onChain = await client.getJob(ASSET, jobId);
+  onChain = await client.getJob(ASSET, jobId);
   const body = {
     commitmentVersion: "1",
     evaluationId: await evaluationJobId({ network: NETWORK, contract: CONTRACTS.sbtcCommerce, jobId: String(jobId) }),

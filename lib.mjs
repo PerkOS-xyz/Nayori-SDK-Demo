@@ -87,7 +87,7 @@ export async function importWallet(name, accountIndex = 0) {
 }
 export function readWalletAddress(name) {
   const path = walletPath(name);
-  if (!existsSync(path)) throw new Error(`wallet "${name}" not found. Create one: node nayori.mjs wallet import ${name}   (or: wallet create ${name})`);
+  if (!existsSync(path)) throw new Error(`wallet "${name}" not found. Create one: nayori wallet import ${name}   (or: wallet create ${name})`);
   const m = readFileSync(path, "utf8").match(/^AGENT_ADDRESS=([A-Z0-9]+)$/m);
   if (!m) throw new Error(`${path}: AGENT_ADDRESS not found`);
   return m[1];
@@ -250,7 +250,7 @@ export async function hire(client, jobId, providerAddress) {
 }
 export async function waitForAssignment(providerAddress, jobFlag) {
   step("WAIT TO BE HIRED. Give this wallet address to a client.");
-  say(`your wallet: ${providerAddress}`, `a client assigns it on a funded job (from the app, or with: node nayori.mjs hire --wallet <client> --job <id> --provider ${providerAddress}).`);
+  say(`your wallet: ${providerAddress}`, `a client assigns it on a funded job (from the app, or with: nayori hire --wallet <client> --job <id> --provider ${providerAddress}).`);
   if (jobFlag) {
     const jobId = BigInt(jobFlag);
     await waitFor(`waiting for job #${jobId} to be funded and assigned to you`, async () => {
@@ -331,7 +331,7 @@ export async function waitDecision(jobId) {
   const decision = await waitFor("waiting for the decision", () => reader.getDecision(ASSET, jobId), 15_000, 30);
   say(`decision: ${String(decision.originalDecision).toUpperCase()}`,
     `appeal window closes at Bitcoin block ${decision.appealDeadline}; then anyone can finalize and the escrow pays out:`,
-    `  node nayori.mjs finalize --wallet <any> --job ${jobId}`);
+    `  nayori finalize --wallet <any> --job ${jobId}`);
   return decision;
 }
 export async function finalize(wallet, jobId) {

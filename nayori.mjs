@@ -1,19 +1,19 @@
 #!/usr/bin/env node
-// Nayori SDK demo CLI. One command per step, one named wallet per role (or per agent).
+// Nayori CLI (npx @perkos/nayori). One command per step, one named wallet per role (or per agent).
 //
-//   node nayori.mjs wallet import <name> [--account N]   # from the secret words of a Leather wallet
-//   node nayori.mjs wallet create <name>                 # a brand-new wallet, generated locally
-//   node nayori.mjs wallet list                          # names, addresses, balances
+//   nayori wallet import <name> [--account N]   # from the secret words of a Leather wallet
+//   nayori wallet create <name>                 # a brand-new wallet, generated locally
+//   nayori wallet list                          # names, addresses, balances
 //
-//   node nayori.mjs create-job --wallet <client> [job.json]            # create + budget + fund
-//   node nayori.mjs hire       --wallet <client> --job <id> --provider <SP...>
-//   node nayori.mjs register   --wallet <agent>  [--name "..."] [--new]
-//   node nayori.mjs deliver    --wallet <agent>  --job <id> --file <deliverable.txt> [--url <published>]
-//   node nayori.mjs evaluate   --job <id>                              # no wallet: asks the evaluator
-//   node nayori.mjs finalize   --wallet <any>    --job <id>            # after the appeal window
-//   node nayori.mjs status     --job <id>
-//   node nayori.mjs wait       --wallet <agent>  [--job <id>]          # block until a client hires you
-//   node nayori.mjs attest     --wallet <name>   --handle <you> --roles client,provider,agent-owner
+//   nayori create-job --wallet <client> [job.json]            # create + budget + fund
+//   nayori hire       --wallet <client> --job <id> --provider <SP...>
+//   nayori register   --wallet <agent>  [--name "..."] [--new]
+//   nayori deliver    --wallet <agent>  --job <id> --file <deliverable.txt> [--url <published>]
+//   nayori evaluate   --job <id>                              # no wallet: asks the evaluator
+//   nayori finalize   --wallet <any>    --job <id>            # after the appeal window
+//   nayori status     --job <id>
+//   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
+//   nayori attest     --wallet <name>   --handle <you> --roles client,provider,agent-owner
 //                                                                       # register yourself: sign the participant attestation
 //
 // Wallets live in ~/.nayori/wallets/<name>.env (mode 0600). Keys are read only when signing.
@@ -32,8 +32,8 @@ const sub = argv[1];
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const has = (name) => argv.includes(name);
 const positional = argv.slice(1).filter((a, i, arr) => !a.startsWith("--") && !(arr[i - 1] ?? "").startsWith("--"));
-const usage = () => { console.log(readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n")); process.exit(cmd ? 2 : 0); };
-const needWallet = () => { const w = flag("--wallet"); if (!w) throw new Error("--wallet <name> is required (node nayori.mjs wallet list)"); return w; };
+const usage = () => { if (has("--help") || has("-h") || !cmd) { /* fallthrough */ } console.log(readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n")); process.exit(cmd ? 2 : 0); };
+const needWallet = () => { const w = flag("--wallet"); if (!w) throw new Error("--wallet <name> is required (nayori wallet list)"); return w; };
 const needJob = () => { const j = flag("--job"); if (!j || !/^[1-9][0-9]*$/.test(j)) throw new Error("--job <id> is required"); return BigInt(j); };
 const loadJob = () => { const f = positional.find((a) => a.endsWith(".json")) ?? "job.json"; const p = existsSync(resolve(f)) ? resolve(f) : join(HERE, "job.example.json"); return JSON.parse(readFileSync(p, "utf8")); };
 
@@ -45,7 +45,7 @@ async function main() {
       if (sub === "import") { const w = await N.importWallet(positional[1] ?? "", Number(flag("--account") ?? 0)); console.log(`imported wallet "${w.name}"\n  address: ${w.address}  (check it matches your wallet app)\n  file:    ${w.path} (mode 0600)`); return; }
       if (sub === "list") {
         const list = N.listWallets();
-        if (list.length === 0) { console.log(`no wallets in ${N.WALLET_DIR}. Create one: node nayori.mjs wallet import <name>`); return; }
+        if (list.length === 0) { console.log(`no wallets in ${N.WALLET_DIR}. Create one: nayori wallet import <name>`); return; }
         for (const w of list) { const b = await N.balances(w.address).catch(() => null); console.log(`  ${w.name.padEnd(16)} ${w.address}  ${b ? `${b.stx.toFixed(3)} STX, ${b.sats} sats` : ""}`); }
         return;
       }
@@ -60,7 +60,7 @@ async function main() {
       const jobId = await N.createAndFund(client, me, job);
       const provider = flag("--provider") ?? job.providerAddress;
       if (provider) await N.hire(client, jobId, provider);
-      else N.say(`next: node nayori.mjs hire --wallet ${wallet} --job ${jobId} --provider <agent wallet address>`);
+      else N.say(`next: nayori hire --wallet ${wallet} --job ${jobId} --provider <agent wallet address>`);
       N.summary(jobId, OUT, { role: "client" });
       return;
     }
@@ -68,7 +68,7 @@ async function main() {
       const wallet = needWallet(); const jobId = needJob();
       const client = N.actor(wallet);
       await N.hire(client, jobId, flag("--provider"));
-      N.say(`the agent now delivers: node nayori.mjs deliver --wallet <agent> --job ${jobId} --file <deliverable.txt>`);
+      N.say(`the agent now delivers: nayori deliver --wallet <agent> --job ${jobId} --file <deliverable.txt>`);
       N.summary(jobId, OUT, { role: "client" });
       return;
     }
@@ -78,14 +78,14 @@ async function main() {
       const me = await provider.signer.getAddress();
       const job = loadJob();
       const id = await N.registerAgent(provider, me, { name: flag("--name") ?? job.agent?.name, description: flag("--description") ?? job.agent?.description, endpoints: job.agent?.endpoints, force: has("--new") });
-      N.say(`agent #${id}, wallet ${me}. Give this address to a client, or wait for a job: node nayori.mjs wait --wallet ${wallet}`);
+      N.say(`agent #${id}, wallet ${me}. Give this address to a client, or wait for a job: nayori wait --wallet ${wallet}`);
       return;
     }
     case "wait": {
       const wallet = needWallet();
       const me = N.readWalletAddress(wallet);
       const jobId = await N.waitForAssignment(me, flag("--job"));
-      N.say(`hired on job #${jobId}. Next: node nayori.mjs deliver --wallet ${wallet} --job ${jobId} --file <deliverable.txt>`);
+      N.say(`hired on job #${jobId}. Next: nayori deliver --wallet ${wallet} --job ${jobId} --file <deliverable.txt>`);
       return;
     }
     case "deliver": {
@@ -125,6 +125,7 @@ async function main() {
     case "finalize": { const wallet = needWallet(); const jobId = needJob(); await N.finalize(N.actor(wallet), jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }
     case "status": { await N.status(needJob()); return; }
     case "state": { await N.readState(); return; }
+    case "--help": case "-h": case undefined: usage(); return;
     default: usage();
   }
 }

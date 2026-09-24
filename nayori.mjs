@@ -32,7 +32,7 @@ const sub = argv[1];
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const has = (name) => argv.includes(name);
 const positional = argv.slice(1).filter((a, i, arr) => !a.startsWith("--") && !(arr[i - 1] ?? "").startsWith("--"));
-const usage = () => { if (has("--help") || has("-h") || !cmd) { /* fallthrough */ } console.log(readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n")); process.exit(cmd ? 2 : 0); };
+const usage = (exitCode = 0) => { const lines = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1); const end = lines.findIndex((l) => !l.startsWith("//")); console.log(lines.slice(0, end).map((l) => l.replace(/^\/\/ ?/, "")).join("\n")); process.exit(exitCode); };
 const needWallet = () => { const w = flag("--wallet"); if (!w) throw new Error("--wallet <name> is required (nayori wallet list)"); return w; };
 const needJob = () => { const j = flag("--job"); if (!j || !/^[1-9][0-9]*$/.test(j)) throw new Error("--job <id> is required"); return BigInt(j); };
 const loadJob = () => { const f = positional.find((a) => a.endsWith(".json")) ?? "job.json"; const p = existsSync(resolve(f)) ? resolve(f) : join(HERE, "job.example.json"); return JSON.parse(readFileSync(p, "utf8")); };
@@ -53,10 +53,11 @@ async function main() {
         console.log(`  with them (account 1 = this address), and you may delete the .words file afterwards.\n`);
         console.log(`  Next:`);
         console.log(`    fund it from Leather: STX for fees (0.1 STX is plenty); sBTC too if this wallet will pay for jobs`);
-        console.log(`    nayori attest --wallet ${w.name} --handle <your-handle> --roles agent-owner,provider   # register yourself`);
-        console.log(`    nayori register --wallet ${w.name} --name "<agent name>"                              # agent side`);
-        console.log(`    nayori create-job --wallet ${w.name}                                                  # client side`);
+        console.log(`    nayori attest --wallet ${w.name}                       # register yourself as this wallet's operator (wizard)`);
+        console.log(`    nayori register --wallet ${w.name} --name "<agent name>" # give this agent an on-chain identity`);
+        console.log(`    nayori create-job --wallet ${w.name}                   # if this agent posts and funds work`);
         console.log(`    nayori wallet list`);
+        console.log(`  Step by step, for you or your AI assistant: https://docs.nayori.ai/nayori-test-guide.md`);
         return;
       }
       if (sub === "import") {
@@ -96,7 +97,7 @@ async function main() {
         console.log(`  explorer     https://explorer.hiro.so/address/${w.address}?chain=${N.P.chain}`);
         return;
       }
-      usage(); return;
+      console.error(`unknown wallet subcommand: ${sub ?? ""}\n`); usage(2); return;
     }
     case "create-job": {
       const wallet = needWallet();
@@ -190,8 +191,8 @@ async function main() {
     case "finalize": { const wallet = needWallet(); const jobId = needJob(); await N.finalize(N.actor(wallet), jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }
     case "status": { await N.status(needJob()); return; }
     case "state": { await N.readState(); return; }
-    case "--help": case "-h": case undefined: usage(); return;
-    default: usage();
+    case "--help": case "-h": case undefined: usage(0); return;
+    default: console.error(`unknown command: ${cmd}\n`); usage(2);
   }
 }
 

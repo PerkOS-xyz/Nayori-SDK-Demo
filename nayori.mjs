@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Nayori CLI (npx @perkos/nayori). One command per step, one named wallet per role (or per agent).
 //
-//   nayori wallet import <name> [--account N]   # from the secret words of a Leather wallet
-//   nayori wallet create <name>                 # a brand-new wallet, generated locally
-//   nayori wallet list                          # names, addresses, balances
+//   nayori wallet create [name]                 # new wallet: 24 secret words + key, saved under a name (random if omitted)
+//   nayori wallet import [name] [--account N]   # an existing wallet, from its secret words (hidden prompt)
+//   nayori wallet list | show <name>            # every wallet created or imported here, with balances
 //
 //   nayori create-job --wallet <client> [job.json]            # create + budget + fund
 //   nayori hire       --wallet <client> --job <id> --provider <SP...>
@@ -41,12 +41,53 @@ async function main() {
   console.log(`Nayori SDK demo  |  @perkos/agent-sdk  |  Stacks ${N.NETWORK}  |  ${new Date().toISOString().slice(0, 16)}Z`);
   switch (cmd) {
     case "wallet": {
-      if (sub === "create") { const w = N.createWallet(positional[1] ?? ""); console.log(`created wallet "${w.name}"\n  address: ${w.address}\n  file:    ${w.path} (mode 0600, keep a backup)\nFund it from Leather: STX for fees; sBTC too if it will pay for jobs.`); return; }
-      if (sub === "import") { const w = await N.importWallet(positional[1] ?? "", Number(flag("--account") ?? 0)); console.log(`imported wallet "${w.name}"\n  address: ${w.address}  (check it matches your wallet app)\n  file:    ${w.path} (mode 0600)`); return; }
+      if (sub === "create") {
+        const w = await N.createWallet(positional[1]);
+        console.log(`\nCreated wallet "${w.name}" on Stacks ${w.network}\n`);
+        console.log(`  address      ${w.address}`);
+        console.log(`  key file     ${w.path}`);
+        console.log(`  secret words ${w.wordsPath}`);
+        console.log(`\n  Your 24 secret words (shown once; the same file holds them, mode 0600):\n`);
+        console.log(`  ${w.words}\n`);
+        console.log(`  Anyone with these words controls the wallet. Back them up offline; you can restore the wallet in Leather`);
+        console.log(`  with them (account 1 = this address), and you may delete the .words file afterwards.\n`);
+        console.log(`  Next:`);
+        console.log(`    fund it from Leather: STX for fees (0.1 STX is plenty); sBTC too if this wallet will pay for jobs`);
+        console.log(`    nayori attest --wallet ${w.name} --handle <your-handle> --roles agent-owner,provider   # register yourself`);
+        console.log(`    nayori register --wallet ${w.name} --name "<agent name>"                              # agent side`);
+        console.log(`    nayori create-job --wallet ${w.name}                                                  # client side`);
+        console.log(`    nayori wallet list`);
+        return;
+      }
+      if (sub === "import") {
+        const w = await N.importWallet(positional[1], Number(flag("--account") ?? 0));
+        console.log(`\nImported wallet "${w.name}" on Stacks ${w.network} (account ${w.account})\n`);
+        console.log(`  address   ${w.address}   (check it matches the account in your wallet app)`);
+        console.log(`  key file  ${w.path}  (mode 0600; the secret words were not stored)`);
+        console.log(`\n  Next: nayori attest --wallet ${w.name} --handle <your-handle> --roles client   |   nayori wallet list`);
+        return;
+      }
       if (sub === "list") {
         const list = N.listWallets();
-        if (list.length === 0) { console.log(`no wallets in ${N.WALLET_DIR}. Create one: nayori wallet import <name>`); return; }
-        for (const w of list) { const b = await N.balances(w.address).catch(() => null); console.log(`  ${w.name.padEnd(16)} ${w.address}  ${b ? `${b.stx.toFixed(3)} STX, ${b.sats} sats` : ""}`); }
+        if (list.length === 0) { console.log(`no wallets in ${N.WALLET_DIR}. Create one: nayori wallet create [name]`); return; }
+        console.log(`\n  ${"name".padEnd(18)} ${"address".padEnd(42)} ${"source".padEnd(9)} ${"created".padEnd(11)} balances`);
+        for (const w of list) {
+          const b = await N.balances(w.address).catch(() => null);
+          console.log(`  ${w.name.padEnd(18)} ${w.address.padEnd(42)} ${w.source.padEnd(9)} ${(w.createdAt || "").slice(0, 10).padEnd(11)} ${b ? `${b.stx.toFixed(3)} STX, ${b.sats} sats` : "(balance unavailable)"}${w.hasWords ? "  [words on disk]" : ""}`);
+        }
+        console.log(`\n  store: ${N.WALLET_DIR}`);
+        return;
+      }
+      if (sub === "show") {
+        const name = positional[1]; if (!name) throw new Error("wallet show <name>");
+        const w = N.listWallets().find((x) => x.name === name); if (!w) throw new Error(`wallet "${name}" not found`);
+        const b = await N.balances(w.address).catch(() => null);
+        const agent = await N.findAgentByWallet(w.address).catch(() => null);
+        console.log(`\n  ${w.name}: ${w.address} (${w.source}, ${w.network}${w.createdAt ? ", " + w.createdAt.slice(0, 10) : ""})`);
+        console.log(`  key file     ${w.path}${w.hasWords ? `\n  secret words ${w.path.replace(/\.env$/, ".words")}` : ""}`);
+        console.log(`  balances     ${b ? `${b.stx.toFixed(6)} STX, ${b.sats} sats sBTC` : "unavailable"}`);
+        console.log(`  agent        ${agent ? `#${agent.id} "${agent.name}"` : "none registered yet"}`);
+        console.log(`  explorer     https://explorer.hiro.so/address/${w.address}?chain=${N.P.chain}`);
         return;
       }
       usage(); return;

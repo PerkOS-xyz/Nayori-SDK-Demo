@@ -6,11 +6,11 @@ evaluator approves the work on-chain. Built on [`@perkos/agent-sdk`](https://www
 plain Node, one command per step, every step a real transaction you can verify on the
 [Hiro explorer](https://explorer.hiro.so/?chain=mainnet).
 
-**One named wallet per role.** You create the agent's wallet in Leather (or let the script generate
-one), import it once under a name, and every command refers to it by that name. Two wallets if you
-play both sides, one per agent if you run several. Nayori never sees a key.
+**One named wallet per role.** The CLI creates the agent's wallet for you (24 secret words, the same
+kind Leather makes) or imports one you already have, under a name; every command refers to it by
+that name. Two wallets if you play both sides, one per agent if you run several. Nayori never sees a key.
 
-**The journey:** 1 create and import your wallets · 2 register yourself as an independent developer
+**The journey:** 1 create (or import) your wallets · 2 register yourself as an independent developer
 (one signed attestation per wallet, with its roles) · 3 client: post a job · 4 agent: take it and
 deliver · 5 payout.
 
@@ -32,23 +32,47 @@ npm install -g @perkos/nayori      # or install once and use `nayori ...`
 
 The examples below use `nayori ...`; with npx, prefix each one with `npx @perkos/nayori`.
 
-## 1. Wallets: create in Leather, import by name
+## 1. Wallets: create by name
 
 ```bash
-# The wallet you created in Leather for your agent: type its secret words in a hidden prompt.
-# The private key is derived locally and saved as ~/.nayori/wallets/agent1.env (mode 0600).
-nayori wallet import agent1
-
-# Or let the CLI generate a fresh wallet and fund it afterwards from Leather.
-nayori wallet create agent2
-
-nayori wallet list        # names, addresses, STX and sBTC balances
+nayori wallet create agent1       # a fresh wallet; omit the name and the CLI picks one (wallet-a1b2c3)
 ```
 
-The secret words are never stored; only the derived private key, in a file that only your user can
-read. Back it up. Use a dedicated wallet per role: the agent's wallet needs a little STX for fees
-(0.1 STX is plenty) and receives sBTC; the client's wallet needs the job budget in sBTC (1,000 sats
-in the example) plus STX for fees. `NAYORI_HOME` moves the store; `NAYORI_NETWORK=testnet`
+The command generates 24 secret words, derives the first account (the one Leather shows as
+"Account 1") and prints everything once:
+
+```text
+Created wallet "agent1" on Stacks mainnet
+
+  address      SP2...
+  key file     /Users/you/.nayori/wallets/agent1.env
+  secret words /Users/you/.nayori/wallets/agent1.words
+
+  Your 24 secret words (shown once; the same file holds them, mode 0600): ...
+
+  Next:
+    fund it from Leather: STX for fees (0.1 STX is plenty); sBTC too if this wallet will pay for jobs
+    nayori attest --wallet agent1 --handle <your-handle> --roles agent-owner,provider   # register yourself
+    nayori register --wallet agent1 --name "<agent name>"                              # agent side
+    nayori create-job --wallet agent1                                                  # client side
+```
+
+Three files, readable only by your user: `agent1.env` (the private key the CLI signs with),
+`agent1.words` (the 24 words, to restore the wallet in Leather or anywhere else; back them up and
+delete the file if you prefer) and `agent1.json` (address, network, date, created or imported).
+
+Already have a wallet in Leather? Import it instead: `nayori wallet import agent1` asks for its
+secret words in a hidden prompt, derives the key locally and stores only the key (`--account N`
+for another account). Then:
+
+```bash
+nayori wallet list          # every wallet created or imported here: address, source, date, balances
+nayori wallet show agent1   # one wallet in detail, with the agent it owns and its explorer link
+```
+
+Fund each wallet from Leather (send to the printed address). The agent's wallet needs a little STX
+for fees (0.1 STX is plenty) and receives sBTC; the client's wallet needs the job budget in sBTC
+(1,000 sats in the example) plus STX for fees. `NAYORI_HOME` moves the store; `NAYORI_NETWORK=testnet`
 switches every command to the QA contracts.
 
 ## 2. Register yourself: one attestation per wallet
@@ -112,7 +136,7 @@ nayori finalize --wallet client --job 5
 
 | Command | Wallet | What it signs |
 |---|---|---|
-| `wallet import <name>` / `wallet create <name>` / `wallet list` | | nothing |
+| `wallet create [name]` / `wallet import [name] [--account N]` / `wallet list` / `wallet show <name>` | | nothing |
 | `create-job --wallet <c> [job.json] [--provider SP...]` | client | create-job, set-budget, fund-job (and assign-provider with `--provider`) |
 | `hire --wallet <c> --job <id> --provider SP...` | client | assign-provider |
 | `register --wallet <a> [--name "..."] [--new]` | agent | register-agent (reuses an agent this wallet already owns) |

@@ -1,6 +1,6 @@
 {
   "name": "@perkos/nayori",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nayori CLI: put an AI agent to work on Stacks from the terminal. Named wallets, developer attestation, create and fund jobs in sBTC escrow, register agents, deliver, evaluate, finalize. Built on @perkos/agent-sdk.",
   "type": "module",
   "license": "MIT",

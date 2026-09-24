@@ -64,37 +64,64 @@ export function walletPath(name) {
   if (!NAME.test(name)) throw new Error(`wallet name "${name}" must be letters, digits, dot, dash or underscore (1..40)`);
   return join(WALLET_DIR, `${name}.env`);
 }
-export function writeWallet(name, privateKey) {
+function writeSecret(path, content) {
+  if (existsSync(path)) throw new Error(`${path} already exists; refusing to overwrite`);
+  mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  writeSync(fd, content);
+  closeSync(fd);
+}
+export function walletMeta(name) {
+  const p = join(WALLET_DIR, `${name}.json`);
+  return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
+}
+export function writeWallet(name, privateKey, meta) {
   const path = walletPath(name);
   if (existsSync(path)) throw new Error(`wallet "${name}" already exists at ${path}; refusing to overwrite a key file`);
   const address = getAddressFromPrivateKey(privateKey, NETWORK);
-  mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-  writeSync(fd, `AGENT_ADDRESS=${address}\nAGENT_PRIVATE_KEY=${privateKey}\n`);
-  closeSync(fd);
-  return { name, address, path };
+  writeSecret(path, `AGENT_ADDRESS=${address}\nAGENT_PRIVATE_KEY=${privateKey}\n`);
+  const info = { name, address, network: NETWORK, account: 0, createdAt: new Date().toISOString(), ...meta };
+  writeSecret(join(WALLET_DIR, `${name}.json`), JSON.stringify(info, null, 2) + "\n");
+  return { ...info, path };
 }
-export function createWallet(name) { return writeWallet(name, randomPrivateKey()); }
+const randomName = () => `wallet-${randomPrivateKey().slice(0, 6)}`;
+/** A brand-new wallet: 24 secret words (BIP39), account 0, like a fresh Leather wallet. */
+export async function createWallet(name) {
+  const { generateSecretKey, generateWallet } = await import("@stacks/wallet-sdk");
+  name = name || randomName();
+  walletPath(name); // validate the name before generating anything
+  const words = generateSecretKey(256);
+  const w = await generateWallet({ secretKey: words, password: "" });
+  const info = writeWallet(name, w.accounts[0].stxPrivateKey, { source: "created" });
+  const wordsPath = join(WALLET_DIR, `${name}.words`);
+  writeSecret(wordsPath, words + "\n");
+  return { ...info, words, wordsPath };
+}
 export async function importWallet(name, accountIndex = 0) {
   const { generateWallet, generateNewAccount } = await import("@stacks/wallet-sdk");
+  name = name || randomName();
+  walletPath(name);
   const raw = await hiddenPrompt(`Secret words of the wallet to import as "${name}" (${NETWORK}, account ${accountIndex}); typing is hidden: `);
   const words = raw.trim().toLowerCase().split(/\s+/);
   if (words.length !== 12 && words.length !== 24) throw new Error(`expected 12 or 24 words, got ${words.length}`);
   let w;
   try { w = await generateWallet({ secretKey: words.join(" "), password: "" }); } catch { throw new Error("could not derive a key from those words (invalid mnemonic?)"); }
   for (let i = w.accounts.length; i <= accountIndex; i++) w = generateNewAccount(w);
-  return writeWallet(name, w.accounts[accountIndex].stxPrivateKey);
+  return writeWallet(name, w.accounts[accountIndex].stxPrivateKey, { source: "imported", account: accountIndex });
 }
 export function readWalletAddress(name) {
   const path = walletPath(name);
-  if (!existsSync(path)) throw new Error(`wallet "${name}" not found. Create one: nayori wallet import ${name}   (or: wallet create ${name})`);
+  if (!existsSync(path)) throw new Error(`wallet "${name}" not found. Create one: nayori wallet create ${name}   (or import: nayori wallet import ${name})`);
   const m = readFileSync(path, "utf8").match(/^AGENT_ADDRESS=([A-Z0-9]+)$/m);
   if (!m) throw new Error(`${path}: AGENT_ADDRESS not found`);
   return m[1];
 }
 export function listWallets() {
   if (!existsSync(WALLET_DIR)) return [];
-  return readdirSync(WALLET_DIR).filter((f) => f.endsWith(".env")).map((f) => f.slice(0, -4)).sort().map((name) => ({ name, address: readWalletAddress(name), path: walletPath(name) }));
+  return readdirSync(WALLET_DIR).filter((f) => f.endsWith(".env")).map((f) => f.slice(0, -4)).sort().map((name) => {
+    const meta = walletMeta(name) ?? {};
+    return { name, address: readWalletAddress(name), path: walletPath(name), source: meta.source ?? "imported", createdAt: meta.createdAt ?? "", network: meta.network ?? NETWORK, hasWords: existsSync(join(WALLET_DIR, `${name}.words`)) };
+  });
 }
 function keyProvider(name) {
   const path = walletPath(name);

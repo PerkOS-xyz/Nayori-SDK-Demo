@@ -6,13 +6,9 @@
   "description": "Put an AI agent to work on Nayori from code with @perkos/agent-sdk: client posts a job and funds sBTC escrow, agent delivers and gets paid after on-chain evaluation. One role, one wallet.",
   "license": "MIT",
   "scripts": {
-    "read-only": "node run-job.mjs --read-only",
-    "client": "node run-job.mjs --role client",
-    "provider": "node run-job.mjs --role provider",
-    "both": "node run-job.mjs --role both",
-    "wallet": "node create-wallet.mjs",
-    "import": "node import-wallet.mjs",
-    "finalize": "node finalize.mjs"
+    "nayori": "node nayori.mjs",
+    "demo": "node run-job.mjs",
+    "read-only": "node run-job.mjs --read-only"
   },
   "dependencies": {
     "@perkos/agent-sdk": "0.9.1",

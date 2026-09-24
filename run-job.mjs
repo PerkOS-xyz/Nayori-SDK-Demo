@@ -83,9 +83,9 @@ function keyProvider(envVar) {
     return m[1];
   };
 }
-function actor(envVar) {
+function actor(envVar, spendingPolicy) {
   const signer = READ_ONLY ? undefined : new HeadlessSigner({ network: NETWORK, privateKeyProvider: keyProvider(envVar) });
-  return { nayori: new PerkOSClient({ network: NETWORK, contracts: CONTRACTS, signer }), signer };
+  return { nayori: new PerkOSClient({ network: NETWORK, contracts: CONTRACTS, signer, spendingPolicy }), signer };
 }
 async function confirmed(nayori, receipt, label) {
   say(`${label} broadcast, waiting for the Stacks block...`);
@@ -102,7 +102,9 @@ const plainDescription = (task, lines) => `${task}\n${CRITERIA_HEADER}\n${lines.
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
-  const { nayori: client, signer: clientSigner } = actor("NAYORI_CLIENT_KEY_FILE");
+  // The SDK refuses to fund without an explicit spending cap: this run may move at most the budget.
+  const { nayori: client, signer: clientSigner } = actor("NAYORI_CLIENT_KEY_FILE",
+    { maxPerTransaction: { sbtc: BUDGET_SATS }, maxPerSession: { sbtc: BUDGET_SATS } });
   const { nayori: provider, signer: providerSigner } = actor("NAYORI_PROVIDER_KEY_FILE");
   const clientAddress = READ_ONLY ? "(read-only)" : await clientSigner.getAddress();
   const providerAddress = READ_ONLY ? "(read-only)" : await providerSigner.getAddress();
@@ -143,14 +145,24 @@ async function main() {
     description: plainDescription(job.task, job.criteria), acceptanceCriteria: toAcceptanceCriteria(job.criteria),
   });
   say("task and criteria go on-chain in the description, with their commitment:", ...prepared.description.split("\n").map((l) => `  ${l}`));
-  const tip = await fetch(`${P.hiro}/extended/v1/block?limit=1`).then((r) => r.json());
-  const expiredAt = BigInt(tip.results[0].height) + BigInt(job.expiryBlocks ?? 17280); // 24 h at 5 s/block, app convention
-  const created = await client.createJob({ asset: ASSET, evaluator: EVALUATOR, expiredAt, description: prepared.description });
-  await confirmed(client, created, "create-job");
-  const jobId = await client.getJobCount(ASSET);
-  say(`job #${jobId} created`);
-  const budgeted = await client.setBudget({ asset: ASSET, jobId, amount: BUDGET_SATS });
-  await confirmed(client, budgeted, "set-budget");
+  let jobId;
+  if (job.resumeJobId) {
+    // Resume a job this client already created and budgeted (for example after an interrupted run).
+    jobId = BigInt(job.resumeJobId);
+    const existing = await client.getJob(ASSET, jobId);
+    if (!existing || existing.client !== clientAddress || existing.description !== prepared.description) throw new Error(`job #${jobId} is not this client's job with these criteria`);
+    if (existing.statusCode !== 0n || existing.budget !== BUDGET_SATS) throw new Error(`job #${jobId} is ${existing.status} with budget ${existing.budget}; resume expects open with budget ${BUDGET_SATS}`);
+    say(`resuming job #${jobId}: created and budgeted earlier by this client (resumeJobId)`);
+  } else {
+    const tip = await fetch(`${P.hiro}/extended/v1/block?limit=1`).then((r) => r.json());
+    const expiredAt = BigInt(tip.results[0].height) + BigInt(job.expiryBlocks ?? 17280); // 24 h at 5 s/block, app convention
+    const created = await client.createJob({ asset: ASSET, evaluator: EVALUATOR, expiredAt, description: prepared.description });
+    await confirmed(client, created, "create-job");
+    jobId = await client.getJobCount(ASSET);
+    say(`job #${jobId} created`);
+    const budgeted = await client.setBudget({ asset: ASSET, jobId, amount: BUDGET_SATS });
+    await confirmed(client, budgeted, "set-budget");
+  }
   const fee = await client.getJobServiceFee(ASSET, jobId);
   const acceptance = { gross: BUDGET_SATS, basisPoints: 200, treasury: fee.treasury, rejectionRefund: "net-after-evaluation" };
   const feeSats = BUDGET_SATS * 200n / 10000n;

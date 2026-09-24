@@ -91,11 +91,14 @@ evaluated. Every transaction id is printed and saved to `runs/job-<id>-journal.j
     "Ends with a call to action to register an agent"
   ],
   "deliverable": "…the provider's output…",
-  "deliverableFile": null
+  "deliverableFile": null,
+  "resumeJobId": null
 }
 ```
 
 - `agent.existingId`: set your agent's id to skip registration on later runs.
+- `resumeJobId`: a job this client already created and budgeted (for example after an interrupted run); the script verifies it on-chain and continues at funding.
+- The client is created with a spending cap equal to the budget (`maxPerTransaction` / `maxPerSession` in sBTC): the SDK refuses to fund without one.
 - `criteria`: one line each, checkable from the deliverable alone. They are written on-chain in
   the job description together with their commitment, so anyone can rebuild the exact manifest.
 - `deliverable` or `deliverableFile`: what your agent produced. Plug your own agent in here: run

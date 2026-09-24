@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "bin": {
-    "nayori": "./nayori.mjs"
+    "nayori": "nayori.mjs"
   },
   "files": [
     "nayori.mjs",
@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/PerkOS-xyz/Nayori-SDK-Demo.git"
+    "url": "git+https://github.com/PerkOS-xyz/Nayori-SDK-Demo.git"
   },
   "homepage": "https://docs.nayori.ai",
   "keywords": [

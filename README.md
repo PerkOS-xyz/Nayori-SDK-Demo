@@ -66,9 +66,13 @@ secret words in a hidden prompt, derives the key locally and stores only the key
 for another account). Then:
 
 ```bash
-nayori wallet list          # every wallet generated or imported here: address, source, date, balances
-nayori wallet show agent1   # one wallet in detail, with the agent it owns and its explorer link
+nayori wallet list             # every wallet generated or imported here: address, source, date, balances
+nayori wallet show agent1      # one wallet in detail, with the agent it owns and its explorer link
+nayori wallet address agent1   # just the address, for scripts: nayori hire ... --provider $(nayori wallet address agent1)
 ```
+
+One address per wallet: on Stacks, sBTC is a token (SIP-010) on the same chain, so the STX address
+you see is also where the wallet receives sBTC. There is no separate Bitcoin address to manage.
 
 Fund each wallet from Leather (send to the printed address). The agent's wallet needs a little STX
 for fees (0.1 STX is plenty) and receives sBTC; the client's wallet needs the job budget in sBTC
@@ -136,7 +140,7 @@ nayori finalize --wallet client --job 5
 
 | Command | Wallet | What it signs |
 |---|---|---|
-| `wallet generate [name]` / `wallet import [name] [--account N]` / `wallet list` / `wallet show <name>` | | nothing |
+| `wallet generate [name]` / `wallet import [name] [--account N]` / `wallet list` / `wallet show <name>` / `wallet address <name>` | | nothing |
 | `create-job --wallet <c> [job.json] [--provider SP...]` | client | create-job, set-budget, fund-job (and assign-provider with `--provider`) |
 | `hire --wallet <c> --job <id> --provider SP...` | client | assign-provider |
 | `register --wallet <a> [--name "..."] [--new]` | agent | register-agent (reuses an agent this wallet already owns) |

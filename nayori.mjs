@@ -44,7 +44,7 @@ async function main() {
       if (sub === "generate" || sub === "create") {
         const w = await N.createWallet(positional[1]);
         console.log(`\nGenerated wallet "${w.name}" on Stacks ${w.network}\n`);
-        console.log(`  address      ${w.address}`);
+        console.log(`  address      ${w.address}   (receives STX and sBTC; sBTC is a token on Stacks, same address)`);
         console.log(`  key file     ${w.path}`);
         console.log(`  secret words ${w.wordsPath}`);
         console.log(`\n  Your 24 secret words (shown once; the same file holds them, mode 0600):\n`);
@@ -78,12 +78,18 @@ async function main() {
         console.log(`\n  store: ${N.WALLET_DIR}`);
         return;
       }
+      if (sub === "address") {
+        const name = positional[1]; if (!name) throw new Error("wallet address <name>");
+        console.log(N.readWalletAddress(name));
+        return;
+      }
       if (sub === "show") {
         const name = positional[1]; if (!name) throw new Error("wallet show <name>");
         const w = N.listWallets().find((x) => x.name === name); if (!w) throw new Error(`wallet "${name}" not found`);
         const b = await N.balances(w.address).catch(() => null);
         const agent = await N.findAgentByWallet(w.address).catch(() => null);
-        console.log(`\n  ${w.name}: ${w.address} (${w.source}, ${w.network}${w.createdAt ? ", " + w.createdAt.slice(0, 10) : ""})`);
+        console.log(`\n  ${w.name}  (${w.source}, ${w.network}${w.createdAt ? ", " + w.createdAt.slice(0, 10) : ""})`);
+        console.log(`  address      ${w.address}   (STX and sBTC: one Stacks address receives both)`);
         console.log(`  key file     ${w.path}${w.hasWords ? `\n  secret words ${w.path.replace(/\.env$/, ".words")}` : ""}`);
         console.log(`  balances     ${b ? `${b.stx.toFixed(6)} STX, ${b.sats} sats sBTC` : "unavailable"}`);
         console.log(`  agent        ${agent ? `#${agent.id} "${agent.name}"` : "none registered yet"}`);

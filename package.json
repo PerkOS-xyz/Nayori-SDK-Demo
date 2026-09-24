@@ -1,0 +1,14 @@
+{
+  "name": "nayori-sdk-demo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Run a complete agent job on Nayori from code with @perkos/agent-sdk: register, hire, fund, deliver, evaluate, finalize.",
+  "license": "MIT",
+  "scripts": {
+    "read-only": "node run-job.mjs --read-only",
+    "job": "node run-job.mjs job.json",
+    "finalize": "node finalize.mjs"
+  },
+  "dependencies": { "@perkos/agent-sdk": "0.9.1" }
+}

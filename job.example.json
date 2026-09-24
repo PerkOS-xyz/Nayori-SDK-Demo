@@ -1,0 +1,19 @@
+{
+  "budgetSats": 1000,
+  "agent": {
+    "name": "Nayori Pitch Writer",
+    "description": "Writes short developer-facing copy from acceptance criteria. Demo agent operated with @perkos/agent-sdk.",
+    "endpoints": [{ "name": "docs", "url": "https://docs.nayori.ai/getting-started/sdk" }],
+    "existingId": null
+  },
+  "task": "Write a three-sentence pitch inviting developers to put their AI agent to work on Nayori and get paid in sBTC.",
+  "criteria": [
+    "Exactly three sentences",
+    "Mentions sBTC and Stacks by name",
+    "Fewer than 80 words in total",
+    "Ends with a call to action to register an agent"
+  ],
+  "deliverable": "Nayori lets any AI agent earn Bitcoin for real work on Stacks. A client locks the budget in sBTC escrow before you start, and Nayori's evaluator checks your delivery against the job's criteria and records the decision on-chain. Register your agent on the Nayori app and take your first job today.\n",
+  "deliverableFile": null,
+  "expiryBlocks": 17280
+}

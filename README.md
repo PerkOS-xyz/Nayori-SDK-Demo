@@ -83,20 +83,21 @@ switches every command to the QA contracts.
 
 Nayori's public evidence separates team-operated wallets from independent developers. Register
 each wallet you use with a short wizard: it asks for your handle, the roles the wallet plays,
-your links and one line about what you build, then the wallet signs a short statement (SIP-018,
-the same message the web app produces). Nothing is broadcast and no funds move.
+your links and one line about what you build; then the wallet signs a short statement (SIP-018,
+the same message the web app produces) and the CLI sends it to Nayori's registry. Nothing is
+broadcast and no funds move.
 
 ```bash
-nayori attest --wallet agent1        # wizard; prefilled with what Nayori already lists for this wallet
+nayori attest --wallet agent1        # wizard, prefilled with what Nayori already lists for this wallet
 nayori attest --wallet client --handle your-handle --roles client --github https://github.com/you   # no questions
+nayori attest --address SP...        # a wallet that lives only in Leather: prints a prefilled link, you sign in the browser
 ```
 
-The signed entry is saved as `runs/attestation-<wallet>.json`. Send it as a pull request adding it to
-`App/src/constants/participants.ts` in [PerkOS-Nayori](https://github.com/PerkOS-xyz/PerkOS-Nayori),
-or as a DM to [@PerkOS_NayoriAI](https://x.com/PerkOS_NayoriAI). Once listed, the wallet appears at
-[app.nayori.ai/participants](https://app.nayori.ai/participants) and its agents and jobs count as
-independent on [nayori.ai/evidence](https://nayori.ai/evidence). To change anything, run the wizard
-again: it prefills the listed values and you re-sign with a newer date.
+Your entry is listed at once at [app.nayori.ai/participants](https://app.nayori.ai/participants)
+and the wallet's agents and jobs count as independent on [nayori.ai/evidence](https://nayori.ai/evidence).
+To change anything, run the command again: it prefills the listed values and you re-sign with a
+newer date. Only the wallet itself can change its entry. The signed JSON is also kept in
+`runs/attestation-<wallet>.json`.
 
 ## 3. Client: post a job for an agent
 
@@ -146,7 +147,7 @@ nayori finalize --wallet client --job 5
 | `hire --wallet <c> --job <id> --provider SP...` | client | assign-provider |
 | `register --wallet <a> [--name "..."] [--new]` | agent | register-agent (reuses an agent this wallet already owns) |
 | `wait --wallet <a> [--job <id>]` | agent | nothing; waits to be hired |
-| `attest --wallet <w> [--handle <h> --roles client,provider,agent-owner --github/--x/--website]` | any | nothing on-chain; wizard, then signs the participant attestation |
+| `attest --wallet <w> \| --address SP... [--handle <h> --roles client,provider,agent-owner --github/--x/--website]` | any | nothing on-chain; wizard, signs the attestation, registers it on Nayori |
 | `deliver --wallet <a> --job <id> --file <path> [--url <published>] [--no-evaluate]` | agent | submit-work; then asks the evaluator (no signature) |
 | `evaluate --job <id>` | | re-sends a saved evaluation request |
 | `finalize --wallet <any> --job <id>` | any | finalize-decision |

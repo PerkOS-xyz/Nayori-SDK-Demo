@@ -13,8 +13,8 @@
 //   nayori finalize   --wallet <any>    --job <id>            # after the appeal window
 //   nayori status     --job <id>
 //   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
-//   nayori attest     --wallet <name>   [--handle <you> --roles client,provider,agent-owner]
-//                                     # register yourself: a short wizard, then the wallet signs the attestation
+//   nayori attest     --wallet <name> | --address <SP...>   [--handle <you> --roles client,provider,agent-owner]
+//                                     # register yourself: a short wizard, the wallet signs, the entry is listed on Nayori
 //
 // Wallets live in ~/.nayori/wallets/<name>.env (mode 0600). Keys are read only when signing.
 // NAYORI_NETWORK=testnet switches every command to the QA contracts.
@@ -155,13 +155,20 @@ async function main() {
       return;
     }
     case "attest": {
-      const wallet = needWallet();
+      const wallet = flag("--wallet"); const address = flag("--address");
+      if (!wallet && !address) throw new Error("--wallet <name> (a wallet this CLI holds) or --address SP... (a wallet that lives in Leather) is required");
       const { mkdirSync, writeFileSync } = await import("node:fs");
       // Wizard by default (prefilled with what Nayori already lists for this wallet); flags skip the questions.
       const answers = flag("--handle")
         ? { handle: flag("--handle"), roles: (flag("--roles") ?? "agent-owner").split(",").map((r) => r.trim()).filter(Boolean), kind: flag("--kind") ?? "independent-developer",
             links: Object.fromEntries(["github", "x", "website"].filter((k) => flag(`--${k}`)).map((k) => [k, flag(`--${k}`)])), organization: flag("--organization"), notes: flag("--notes") }
-        : await N.attestWizard(wallet);
+        : await N.attestWizard(wallet, address);
+      if (!wallet) {
+        // No key here: the browser signs. Hand the developer the prefilled form.
+        console.log(`\n  This CLI does not hold the key of ${address}. Open this link, connect that wallet in Leather and sign:\n`);
+        console.log(`  ${N.registrationLink(answers)}\n`);
+        return;
+      }
       const entry = await N.attest(wallet, answers);
       mkdirSync(OUT, { recursive: true });
       const file = join(OUT, `attestation-${wallet}.json`);
@@ -169,10 +176,15 @@ async function main() {
       console.log(`\n  signed by ${entry.wallet.address} as "${entry.handle}" (${entry.kind}; roles ${entry.wallet.roles.join(", ")})`);
       console.log(`  agents this wallet owns on-chain: ${entry.agentIds.length ? entry.agentIds.map((id) => "#" + id).join(", ") : "none yet"}`);
       console.log(`  saved       ${file}`);
-      console.log(`\n  Send this file to Nayori: a pull request adding it to App/src/constants/participants.ts in`);
-      console.log(`  github.com/PerkOS-xyz/PerkOS-Nayori, or a DM to @PerkOS_NayoriAI. Once listed, this wallet appears as`);
-      console.log(`  independent at ${N.P.app}/participants and its agents and jobs count on nayori.ai/evidence.`);
-      console.log(`  To change anything later, run "nayori attest --wallet ${wallet}" again: it prefills what is listed and you re-sign.`);
+      const sent = await N.submitAttestation(entry).catch((e) => { console.log(`  registry    ${e.message}`); return null; });
+      if (sent) {
+        console.log(`  registry    ${sent.created ? "listed" : "updated"}: ${sent.url}`);
+        console.log(`\n  Your wallet now counts as independent on nayori.ai/evidence. To change anything, run this command again:`);
+        console.log(`  it prefills what is listed and you re-sign.`);
+      } else {
+        console.log(`\n  The registry did not take the entry, so send the file to Nayori: a pull request adding it to`);
+        console.log(`  App/src/constants/participants.ts in github.com/PerkOS-xyz/PerkOS-Nayori, or a DM to @PerkOS_NayoriAI.`);
+      }
       return;
     }
     case "finalize": { const wallet = needWallet(); const jobId = needJob(); await N.finalize(N.actor(wallet), jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }

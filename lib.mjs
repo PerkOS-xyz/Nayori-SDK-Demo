@@ -24,7 +24,7 @@ export const PROFILES = {
   testnet: { deployer: "ST16EWRC01S1SFWGBP63MW47VY8P3AYFA8VGEBGE5", evaluator: "STBTXHXFXFGMNPXST7A6XQ1WNGC0V6TB6CDDQZB4", hiro: "https://api.testnet.hiro.so", relay: "https://qa.nayori.ai/api/evaluations", app: "https://qa.nayori.ai", chain: "testnet" },
 };
 export const NETWORK = process.env.NAYORI_NETWORK ?? "mainnet";
-export const P = PROFILES[NETWORK];
+export const P = { ...PROFILES[NETWORK], ...(process.env.NAYORI_APP ? { app: process.env.NAYORI_APP.replace(/\/$/, ""), relay: `${process.env.NAYORI_APP.replace(/\/$/, "")}/api/evaluations` } : {}) };
 if (!P) throw new Error("NAYORI_NETWORK must be mainnet or testnet");
 export const ASSET = "sbtc";
 export const CONTRACTS = { stxCommerce: `${P.deployer}.agentic-commerce-v6`, sbtcCommerce: `${P.deployer}.sbtc-commerce-v5` };
@@ -426,11 +426,28 @@ function session() {
   const ask = (q) => new Promise((resolve) => { stdout.write(q); if (lines.length) return resolve(lines.shift().trim()); if (closed) return resolve(""); waiting.push((l) => resolve(l.trim())); });
   return { ask, close: () => rl.close() };
 }
+/** Sends the signed entry to Nayori's registry. Returns the profile URL, or null when this deployment stores nothing yet. */
+export async function submitAttestation(entry) {
+  const r = await fetch(`${P.app}/api/participants`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(entry), signal: AbortSignal.timeout(20_000) });
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 503 && body.error === "registry_not_configured") return null;
+  if (r.status === 404 || r.status === 405) return null;
+  if (!r.ok) throw new Error(`registry answered ${r.status}: ${body.message ?? body.error ?? "unknown error"}`);
+  return { url: body.url ?? `${P.app}${body.path ?? "/participants"}`, created: Boolean(body.created) };
+}
+/** For a wallet that lives only in Leather: the web form, prefilled with the wizard's answers, to sign in the browser. */
+export function registrationLink(answers) {
+  const q = new URLSearchParams({ register: "1", handle: answers.handle ?? "", kind: answers.kind ?? "", roles: (answers.roles ?? []).join(",") });
+  for (const k of ["github", "x", "website"]) if (answers.links?.[k]) q.set(k, answers.links[k]);
+  if (answers.organization) q.set("organization", answers.organization);
+  if (answers.notes) q.set("notes", answers.notes);
+  return `${P.app}/participants?${q}`;
+}
 /** Interactive registration: asks for everything, prefilled with what is already listed. Returns the answers. */
-export async function attestWizard(name) {
-  const address = readWalletAddress(name);
+export async function attestWizard(name, addressOverride) {
+  const address = addressOverride ?? readWalletAddress(name);
   const listed = await listedParticipant(address);
-  console.log(`\nRegister yourself on Nayori as the operator of wallet "${name}" (${address})`);
+  console.log(`\nRegister yourself on Nayori as the operator of wallet ${name ? `"${name}" (${address})` : address}`);
   console.log(listed ? `  already listed as "${listed.handle}"; press Enter to keep a value, type to change it\n` : `  not listed yet; press Enter to accept a default\n`);
   const { ask, close } = session();
   try {

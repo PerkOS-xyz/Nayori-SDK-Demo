@@ -146,6 +146,20 @@ export async function balances(address) {
   return { stx: Number(d.stx?.balance ?? 0) / 1e6, sats };
 }
 
+/**
+ * Before a wallet signs anything: does it hold enough STX for fees (and sBTC for a budget)?
+ * Says exactly what to send and where. If the balance API is unavailable (rate limit), warns and continues.
+ */
+export async function requireFunds(name, address, { stx = 0.01, sats = 0, purpose = "fees" } = {}) {
+  let b;
+  try { b = await balances(address); } catch { console.log(`   (could not read the balance of ${address}; continuing)`); return; }
+  const missing = [];
+  if (b.stx < stx) missing.push(`at least ${stx} STX for ${purpose} (has ${b.stx.toFixed(6)} STX; 0.1 STX is plenty)`);
+  if (sats > 0 && b.sats < sats) missing.push(`${sats} sats of sBTC for the job budget (has ${b.sats} sats = ${(b.sats / 1e8).toFixed(8)} sBTC; send ${(sats / 1e8).toFixed(8)} sBTC)`);
+  if (missing.length === 0) return;
+  throw new Error(`wallet "${name}" (${address}) needs funding before it can sign:\n   - ${missing.join("\n   - ")}\n   Send it from Leather or any Stacks wallet to ${address}; one Stacks address receives both STX and sBTC. Then re-run this command.`);
+}
+
 // ---------- transactions ----------
 export async function confirmed(nayori, receipt, label) {
   say(`${label} broadcast, waiting for the Stacks block...`);

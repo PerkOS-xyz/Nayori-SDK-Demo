@@ -105,6 +105,7 @@ async function main() {
       const client = N.actor(wallet, BigInt(job.budgetSats ?? 1000));
       const me = await client.signer.getAddress();
       N.say(`client wallet "${wallet}": ${me}`);
+      await N.requireFunds(wallet, me, { stx: 0.05, sats: Number(job.budgetSats ?? 1000), purpose: "the create, budget, fund and assign transactions" });
       const jobId = await N.createAndFund(client, me, job);
       const provider = flag("--provider") ?? job.providerAddress;
       if (provider) await N.hire(client, jobId, provider);
@@ -115,6 +116,7 @@ async function main() {
     case "hire": {
       const wallet = needWallet(); const jobId = needJob();
       const client = N.actor(wallet);
+      await N.requireFunds(wallet, await client.signer.getAddress(), { stx: 0.01, purpose: "the assign-provider transaction" });
       await N.hire(client, jobId, flag("--provider"));
       N.say(`the agent now delivers: nayori deliver --wallet <agent> --job ${jobId} --file <deliverable.txt>`);
       N.summary(jobId, OUT, { role: "client" });
@@ -125,6 +127,7 @@ async function main() {
       const provider = N.actor(wallet);
       const me = await provider.signer.getAddress();
       const job = loadJob();
+      await N.requireFunds(wallet, me, { stx: 0.01, purpose: "the register-agent transaction" });
       const id = await N.registerAgent(provider, me, { name: flag("--name") ?? job.agent?.name, description: flag("--description") ?? job.agent?.description, endpoints: job.agent?.endpoints, force: has("--new") });
       N.say(`agent #${id}, wallet ${me}. Give this address to a client, or wait for a job: nayori wait --wallet ${wallet}`);
       return;
@@ -141,6 +144,7 @@ async function main() {
       const provider = N.actor(wallet);
       const me = await provider.signer.getAddress();
       const job = loadJob();
+      await N.requireFunds(wallet, me, { stx: 0.01, purpose: "the submit-work transaction" });
       const { evidence, parsed } = await N.deliver(provider, me, jobId, { file: flag("--file") ?? job.deliverableFile, text: job.deliverable, url: flag("--url") }, OUT);
       if (!has("--no-evaluate")) { await N.requestEvaluation(jobId, me, evidence, parsed, OUT); await N.waitDecision(jobId); }
       N.summary(jobId, OUT, { role: "provider" });
@@ -188,7 +192,7 @@ async function main() {
       }
       return;
     }
-    case "finalize": { const wallet = needWallet(); const jobId = needJob(); await N.finalize(N.actor(wallet), jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }
+    case "finalize": { const wallet = needWallet(); const jobId = needJob(); const w = N.actor(wallet); await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.01, purpose: "the finalize-decision transaction" }); await N.finalize(w, jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }
     case "status": { await N.status(needJob()); return; }
     case "state": { await N.readState(); return; }
     case "--help": case "-h": case undefined: usage(0); return;

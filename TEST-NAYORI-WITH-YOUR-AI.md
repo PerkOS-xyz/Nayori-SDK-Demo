@@ -276,6 +276,8 @@ explorer without trusting Nayori.
 | You see | Do |
 | --- | --- |
 | `wallet "x" not found` | `npx @perkos/nayori wallet list`; names are case-sensitive |
+| `needs funding before it can sign` | the CLI checked the balance first: send the STX (and sBTC) it lists to the address it prints, wait a block, re-run |
+| `Per-minute rate limit exceeded` / balances show 0 or `(balance unavailable)` right after several commands | Hiro's public API rate-limits bursts; wait a minute before the next `wallet list` or `status` |
 | balance still 0 after funding | wait a block (~10 min max), `wallet show` again; check the address you sent to |
 | `SDK refused ... spending policy` | the client wallet caps spending to the budget; pass the same `job.json` you funded with |
 | `evaluator did not answer` after 15 s | admission usually succeeded; keep `status --job <n>` for a few minutes before re-sending with `evaluate --job <n>` |

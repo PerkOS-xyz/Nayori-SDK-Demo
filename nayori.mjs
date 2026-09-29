@@ -11,6 +11,7 @@
 //   nayori deliver    --wallet <agent>  --job <id> --file <deliverable.txt> [--url <published>]
 //   nayori evaluate   --job <id>                              # no wallet: asks the evaluator
 //   nayori finalize   --wallet <any>    --job <id>            # after the appeal window
+//   nayori settle     --wallet <any>    --job <id>            # no decision within the review window: pay the provider
 //   nayori status     --job <id>
 //   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
 //   nayori attest     --wallet <name> | --address <SP...>   [--handle <you> --roles client,provider,agent-owner]
@@ -193,6 +194,7 @@ async function main() {
       return;
     }
     case "finalize": { const wallet = needWallet(); const jobId = needJob(); const w = N.actor(wallet); await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.01, purpose: "the finalize-decision transaction" }); await N.finalize(w, jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }
+    case "settle": { const wallet = needWallet(); const jobId = needJob(); const w = N.actor(wallet); await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.01, purpose: "the settle-review-timeout transaction" }); await N.settleTimeout(w, jobId); N.summary(jobId, OUT, { role: "settle" }); return; }
     case "status": { await N.status(needJob()); return; }
     case "state": { await N.readState(); return; }
     case "--help": case "-h": case undefined: usage(0); return;

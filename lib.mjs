@@ -366,14 +366,51 @@ export async function requestEvaluation(jobId, providerAddress, evidence, parsed
   writeFileSync(join(outDir, `job-${jobId}-evaluation-request.json`), JSON.stringify(body, null, 2));
   const relay = await fetch(P.relay, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) }).catch(() => null);
   say(`POST ${P.relay} -> ${relay ? `HTTP ${relay.status}` : "no answer yet (the evaluator may still admit it)"} (evaluation ${body.evaluationId})`);
+  if (relay && !relay.ok) {
+    const answer = await relay.text().catch(() => "");
+    const code = (() => { try { return JSON.parse(answer).error; } catch { return ""; } })();
+    if (answer) say(`evaluator answered: ${answer.slice(0, 300)}`);
+    if (code === "worker_unavailable") say("Nayori's evaluator is temporarily unavailable. Your work is safe on-chain: try `nayori evaluate --job " + jobId + "` again in a few minutes.",
+      `If no decision is recorded before Bitcoin block ${onChain.reviewDeadline}, the escrow pays you in full: nayori settle --wallet <any> --job ${jobId}`);
+    else if (relay.status === 502) say("the relay timed out while the evaluator was working; the request was usually admitted. Waiting on-chain.");
+  }
+  return { reviewDeadline: onChain.reviewDeadline };
+}
+async function burnTip() {
+  return fetch(`${P.hiro}/extended/v1/block?limit=1`).then((r) => r.json()).then((d) => BigInt(d.results[0].burn_block_height));
 }
 export async function waitDecision(jobId) {
   say("the evaluator downloads the evidence, checks the commitment, runs primary and verifier inference", "and signs only record-decision. Waiting for it on-chain...");
-  const decision = await waitFor("waiting for the decision", () => reader.getDecision(ASSET, jobId), 15_000, 30);
+  const job = await reader.getJob(ASSET, jobId);
+  const deadline = job.reviewDeadline ? BigInt(job.reviewDeadline) : null;
+  const decision = await waitFor("waiting for the decision", async () => {
+    const d = await reader.getDecision(ASSET, jobId);
+    if (d) return d;
+    if (deadline !== null && (await burnTip().catch(() => 0n)) > deadline) return { timedOut: true };
+    return null;
+  }, 15_000, 40);
+  if (decision.timedOut) {
+    say(`no decision was recorded before the review deadline (Bitcoin block ${deadline}).`,
+      "The escrow now pays the provider the full budget; anyone can settle it:",
+      `  nayori settle --wallet <any> --job ${jobId}`);
+    return null;
+  }
   say(`decision: ${String(decision.originalDecision).toUpperCase()}`,
     `appeal window closes at Bitcoin block ${decision.appealDeadline}; then anyone can finalize and the escrow pays out:`,
     `  nayori finalize --wallet <any> --job ${jobId}`);
   return decision;
+}
+/** After the review window (12 Bitcoin blocks) with no decision, the escrow pays the provider in full. Anyone can call it. */
+export async function settleTimeout(wallet, jobId) {
+  step(`SETTLE THE REVIEW TIMEOUT. Wallet "${wallet.name}" releases job #${jobId} to its provider.`);
+  const [job, decision, tip] = await Promise.all([reader.getJob(ASSET, jobId), reader.getDecision(ASSET, jobId).catch(() => null), burnTip()]);
+  say(`status ${job.status}, review deadline ${job.reviewDeadline ?? "n/a"}, Bitcoin block now ${tip}`);
+  if (decision) throw new Error(`job #${jobId} has a decision (${decision.originalDecision}); use: nayori finalize --wallet <any> --job ${jobId}`);
+  if (job.status !== "submitted") throw new Error(`job #${jobId} is ${job.status}; only a submitted job can be settled by timeout`);
+  if (!job.reviewDeadline || tip <= BigInt(job.reviewDeadline)) throw new Error(`review window still open: ${BigInt(job.reviewDeadline ?? 0) - tip} Bitcoin blocks left; the evaluator can still decide`);
+  const receipt = await wallet.nayori.settleReviewTimeout(ASSET, jobId);
+  await confirmed(wallet.nayori, receipt, "settle-review-timeout");
+  say(`job #${jobId} paid to its provider ${job.provider}: ${job.budget} sats (full budget, no service fee)`);
 }
 export async function finalize(wallet, jobId) {
   step(`FINALIZE. Wallet "${wallet.name}" pays the escrow out of job #${jobId}.`);
@@ -395,7 +432,16 @@ export async function status(jobId) {
   const parsed = (() => { try { return parseJobDescription(job.description); } catch { return null; } })();
   say(`job #${jobId}: ${job.status} | budget ${job.budget} sats | escrow ${escrow} sats`, `client ${job.client}`, `provider ${job.provider ?? "(none yet)"}`, `evaluator ${job.evaluator}`);
   if (parsed) say(`task: ${parsed.task}`, ...parsed.criteria.map((c, i) => `  ${i + 1}. ${c}`));
-  if (decision) say(`decision: ${decision.originalDecision.toUpperCase()} (appeal deadline burn ${decision.appealDeadline})`);
+  const tip = await burnTip().catch(() => null);
+  if (decision) {
+    say(`decision: ${decision.originalDecision.toUpperCase()} (appeal deadline burn ${decision.appealDeadline})`);
+    if (job.status === "decision-pending" && tip !== null)
+      say(tip > BigInt(decision.appealDeadline) ? `appeal window closed (Bitcoin block now ${tip}). Next: nayori finalize --wallet <any> --job ${jobId}` : `appeal window open: ${BigInt(decision.appealDeadline) - tip} Bitcoin blocks left`);
+  } else if (job.status === "submitted" && job.reviewDeadline && tip !== null) {
+    say(tip > BigInt(job.reviewDeadline)
+      ? `no decision was recorded before the review deadline (Bitcoin block ${job.reviewDeadline}, now ${tip}). The escrow pays the provider in full. Next: nayori settle --wallet <any> --job ${jobId}`
+      : `waiting for the evaluator: review window closes at Bitcoin block ${job.reviewDeadline} (${BigInt(job.reviewDeadline) - tip} blocks left). Ask again with: nayori evaluate --job ${jobId}`);
+  }
   say(`${P.app}/jobs/${jobId}?currency=sbtc`);
   return { job, decision, escrow };
 }

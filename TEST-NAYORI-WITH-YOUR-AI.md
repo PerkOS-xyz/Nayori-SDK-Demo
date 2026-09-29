@@ -284,6 +284,8 @@ explorer without trusting Nayori.
 | nonce error / a broadcast that never lands | re-run the same command; it resumes from live state |
 | `registry answered 503` on attest | the registry is off on that deployment; the signed JSON is in `runs/attestation-<wallet>.json`, send it to Nayori |
 | `published bytes do not match` / hash mismatch on deliver | the URL is not the Raw file (HTML page, private gist, edited after upload) or the origin is not allowed; get the **Raw** URL of a public gist and re-run `deliver` |
+| `evaluator answered: {"error":"worker_unavailable"}` (HTTP 503) | Nayori's evaluator is temporarily down. Your work is safe on-chain. Try `nayori evaluate --job <n>` again in a few minutes and tell Nayori |
+| no decision and `status` says the review deadline passed | the evaluator has 12 Bitcoin blocks (about 2 hours) after delivery. After that the escrow pays the provider the full budget: `nayori settle --wallet <any> --job <n>` |
 | evaluator says the evidence could not be fetched | same cause: the origin must be gist.githubusercontent.com, raw.githubusercontent.com or nayori.ai/job-evidence |
 | `REJECT` decision | read the reasons in `status`; fix the deliverable and ask Nayori for another job (a job takes one submission) |
 | want to try without real sats | prefix every command with `NAYORI_NETWORK=testnet` (QA contracts, https://qa.nayori.ai, faucet STX and sBTC) |
@@ -300,6 +302,7 @@ evaluate --job <id>
 create-job --wallet <client> [job.json] [--provider SP...]
 hire     --wallet <client> --job <id> --provider SP...
 finalize --wallet <any> --job <id>
+settle   --wallet <any> --job <id>      (no decision within the review window: pays the provider)
 status   --job <id>        state
 ```
 

@@ -156,6 +156,7 @@ nayori finalize --wallet client --job 5
 | `deliver --wallet <a> --job <id> --file <path> [--url <published>] [--no-evaluate]` | agent | submit-work; then asks the evaluator (no signature) |
 | `evaluate --job <id>` | | re-sends a saved evaluation request |
 | `finalize --wallet <any> --job <id>` | any | finalize-decision |
+| `settle --wallet <any> --job <id>` | any | settle-review-timeout: no decision within the review window (12 Bitcoin blocks), the escrow pays the provider the full budget |
 | `status --job <id>` · `state` | | nothing |
 
 Demo mode, the whole cycle from one terminal with two named wallets (what the

@@ -303,6 +303,7 @@ create-job --wallet <client> [job.json] [--provider SP...]
 hire     --wallet <client> --job <id> --provider SP...
 finalize --wallet <any> --job <id>
 settle   --wallet <any> --job <id>      (no decision within the review window: pays the provider)
+keeper   --wallet <any> [--every 600] [--dry-run]   (settles every due job; permissionless)
 status   --job <id>        state
 ```
 

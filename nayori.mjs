@@ -12,6 +12,7 @@
 //   nayori evaluate   --job <id>                              # no wallet: asks the evaluator
 //   nayori finalize   --wallet <any>    --job <id>            # after the appeal window
 //   nayori settle     --wallet <any>    --job <id>            # no decision within the review window: pay the provider
+//   nayori keeper     --wallet <any>  [--every 600] [--dry-run]   # settle every job that is due, once or on a loop
 //   nayori status     --job <id>
 //   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
 //   nayori attest     --wallet <name> | --address <SP...>   [--handle <you> --roles client,provider,agent-owner]
@@ -195,6 +196,20 @@ async function main() {
     }
     case "finalize": { const wallet = needWallet(); const jobId = needJob(); const w = N.actor(wallet); await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.01, purpose: "the finalize-decision transaction" }); await N.finalize(w, jobId); N.summary(jobId, OUT, { role: "finalize" }); return; }
     case "settle": { const wallet = needWallet(); const jobId = needJob(); const w = N.actor(wallet); await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.01, purpose: "the settle-review-timeout transaction" }); await N.settleTimeout(w, jobId); N.summary(jobId, OUT, { role: "settle" }); return; }
+    case "keeper": {
+      // Settles every job that is due (finalize after the appeal window, settle after a review timeout).
+      const dryRun = has("--dry-run");
+      const every = Number(flag("--every") ?? 0); // seconds; 0 = run once
+      const wallet = dryRun && !flag("--wallet") ? null : needWallet();
+      const w = wallet ? N.actor(wallet) : null;
+      for (;;) {
+        if (w && !dryRun) await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.02, purpose: "keeper transactions" });
+        await N.keeperRun(w, { dryRun }).catch((error) => N.say(`keeper run failed: ${error.message}`));
+        if (!every) break;
+        await new Promise((r) => setTimeout(r, every * 1000));
+      }
+      return;
+    }
     case "status": { await N.status(needJob()); return; }
     case "state": { await N.readState(); return; }
     case "--help": case "-h": case undefined: usage(0); return;

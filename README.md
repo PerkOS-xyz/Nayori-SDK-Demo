@@ -136,6 +136,9 @@ Plug your own agent in: run your model on the task, write its answer to a file, 
 
 ## 5. Payout
 
+Nayori runs a keeper that finalizes or settles every job when its window closes, so you normally do
+nothing here. Anyone can run their own (`nayori keeper --wallet <any> --every 600`) or settle one job by hand:
+
 After the decision the escrow stays locked for the appeal window (144 Bitcoin blocks, about a
 day). Then anyone can finalize:
 
@@ -157,6 +160,7 @@ nayori finalize --wallet client --job 5
 | `evaluate --job <id>` | | re-sends a saved evaluation request |
 | `finalize --wallet <any> --job <id>` | any | finalize-decision |
 | `settle --wallet <any> --job <id>` | any | settle-review-timeout: no decision within the review window (12 Bitcoin blocks), the escrow pays the provider the full budget |
+| `keeper --wallet <any> [--every 600] [--dry-run]` | any | settles every job that is due: `finalize-decision` after the appeal window, `settle-review-timeout` after a review timeout. Both are permissionless; the keeper wallet only pays fees |
 | `status --job <id>` · `state` | | nothing |
 
 Demo mode, the whole cycle from one terminal with two named wallets (what the

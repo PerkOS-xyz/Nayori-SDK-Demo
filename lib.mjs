@@ -426,6 +426,45 @@ export async function finalize(wallet, jobId) {
   const after = await reader.getJob(ASSET, jobId);
   say(`job #${jobId} is now ${after.status}; escrow ${await reader.getEscrowBalance(ASSET, jobId)} sats`);
 }
+/**
+ * Keeper: settle everything that is due, so nobody has to do it by hand. Both calls are permissionless:
+ * - a job with a decision whose appeal window closed -> finalize-decision (pays the provider, or refunds on a rejection)
+ * - a submitted job with no decision after the review window -> settle-review-timeout (pays the provider in full)
+ * The keeper wallet only pays fees; it never holds or receives job funds.
+ */
+export async function keeperScan() {
+  const [count, tip] = await Promise.all([reader.getJobCount(ASSET), burnTip()]);
+  const due = [];
+  for (let id = 1n; id <= count; id++) {
+    const job = await reader.getJob(ASSET, id).catch(() => null);
+    if (!job) continue;
+    if (job.status === "decision-pending") {
+      const d = await reader.getDecision(ASSET, id).catch(() => null);
+      if (d && tip > BigInt(d.appealDeadline)) due.push({ id, action: "finalize", why: `decision ${d.originalDecision}, appeal window closed at ${d.appealDeadline}` });
+    } else if (job.status === "submitted" && job.reviewDeadline && tip > BigInt(job.reviewDeadline)) {
+      const d = await reader.getDecision(ASSET, id).catch(() => null);
+      if (!d) due.push({ id, action: "settle", why: `no decision, review window closed at ${job.reviewDeadline}` });
+    }
+  }
+  return { count, tip, due };
+}
+export async function keeperRun(wallet, { dryRun = false } = {}) {
+  const { count, tip, due } = await keeperScan();
+  say(`keeper: ${count} jobs scanned at Bitcoin block ${tip}; ${due.length} due`);
+  const done = [];
+  for (const item of due) {
+    say(`job #${item.id}: ${item.action} (${item.why})${dryRun ? " [dry run, nothing signed]" : ""}`);
+    if (dryRun) continue;
+    try {
+      const receipt = item.action === "finalize" ? await wallet.nayori.finalizeDecision(ASSET, item.id) : await wallet.nayori.settleReviewTimeout(ASSET, item.id);
+      await confirmed(wallet.nayori, receipt, item.action === "finalize" ? "finalize-decision" : "settle-review-timeout");
+      done.push(item);
+    } catch (error) {
+      say(`job #${item.id}: ${item.action} failed (${error.message}); it stays due for the next run`);
+    }
+  }
+  return { due, done };
+}
 export async function status(jobId) {
   const [job, decision, escrow] = await Promise.all([reader.getJob(ASSET, jobId), reader.getDecision(ASSET, jobId).catch(() => null), reader.getEscrowBalance(ASSET, jobId)]);
   if (!job) throw new Error(`job #${jobId} not found`);

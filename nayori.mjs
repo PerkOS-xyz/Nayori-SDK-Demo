@@ -203,8 +203,14 @@ async function main() {
       const wallet = dryRun && !flag("--wallet") ? null : needWallet();
       const w = wallet ? N.actor(wallet) : null;
       for (;;) {
-        if (w && !dryRun) await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.02, purpose: "keeper transactions" });
-        await N.keeperRun(w, { dryRun }).catch((error) => N.say(`keeper run failed: ${error.message}`));
+        // In loop mode a failed pass (unfunded wallet, API hiccup) is reported and retried on the next cycle.
+        try {
+          if (w && !dryRun) await N.requireFunds(wallet, await w.signer.getAddress(), { stx: 0.02, purpose: "keeper transactions" });
+          await N.keeperRun(w, { dryRun });
+        } catch (error) {
+          if (!every) throw error;
+          N.say(`keeper pass skipped: ${error.message.split("\n")[0]}`, `next pass in ${every} s`);
+        }
         if (!every) break;
         await new Promise((r) => setTimeout(r, every * 1000));
       }

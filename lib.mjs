@@ -248,6 +248,7 @@ export async function createAndFund(client, clientAddress, job) {
     jobId = BigInt(job.resumeJobId);
     onChain = await reader.getJob(ASSET, jobId);
     if (!onChain || onChain.client !== clientAddress || onChain.description !== prepared.description) throw new Error(`job #${jobId} is not this wallet's job with these criteria`);
+    if (onChain.statusCode > 1n) throw new Error(`job #${jobId} is ${onChain.status} and cannot be resumed; remove resumeJobId from job.json to create a new job`);
     say(`resuming job #${jobId}: currently ${onChain.status}, budget ${onChain.budget} sats`);
   } else {
     const tip = await fetch(`${P.hiro}/extended/v1/block?limit=1`).then((r) => r.json());

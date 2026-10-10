@@ -14,6 +14,7 @@
 //   nayori settle     --wallet <any>    --job <id>            # no decision within the review window: pay the provider
 //   nayori keeper     --wallet <any>  [--every 600] [--dry-run]   # settle every job that is due, once or on a loop
 //   nayori status     --job <id>
+//   nayori --version                            # print the CLI version
 //   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
 //   nayori attest     --wallet <name> | --address <SP...>   [--handle <you> --roles client,provider,agent-owner]
 //                                     # register yourself: a short wizard, the wallet signs, the entry is listed on Nayori
@@ -40,6 +41,7 @@ const needJob = () => { const j = flag("--job"); if (!j || !/^[1-9][0-9]*$/.test
 const loadJob = () => { const f = positional.find((a) => a.endsWith(".json")) ?? "job.json"; const p = existsSync(resolve(f)) ? resolve(f) : join(HERE, "job.example.json"); return JSON.parse(readFileSync(p, "utf8")); };
 
 async function main() {
+  if (cmd === "--version" || cmd === "-v" || cmd === "version") { console.log(JSON.parse(readFileSync(join(HERE, "package.json"), "utf8")).version); return; }
   console.log(`Nayori SDK demo  |  @perkos/agent-sdk  |  Stacks ${N.NETWORK}  |  ${new Date().toISOString().slice(0, 16)}Z`);
   switch (cmd) {
     case "wallet": {

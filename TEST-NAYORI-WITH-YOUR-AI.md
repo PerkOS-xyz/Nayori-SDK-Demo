@@ -139,6 +139,14 @@ npx @perkos/nayori create-job --wallet my-client-agent job.json --provider $(npx
 Expected: `create-job`, `set-budget`, `fund-job` and `assign-provider` transaction ids, each
 `confirmed`, then `job #<n>` with `escrow 1000 sats`. The task and criteria go on-chain with a
 hash that commits them. Criteria must be one line each and checkable from the deliverable alone.
+Write them literally, the way the evaluator can count or match them: `Between 120 and 200 words`,
+`Exactly three sentences`, `Contains the word escrow`. Proper nouns are fine (`Mentions sBTC and
+Stacks by name`); for a role, use the word itself, because the evaluator reads `the escrow by name`
+as the contract's name. Avoid `clearly`, `properly` or `well written`.
+`create-job` waits for four transactions, one Stacks block each, so it can take 3 to 5 minutes.
+If your assistant runs commands with a time limit, raise it or run this one in its own terminal.
+The job id prints as soon as `create-job` confirms; if the run is cut, `status --job <n>` shows how
+far it got, and setting `"resumeJobId": <n>` in `job.json` and re-running continues from there.
 (`hire --wallet my-client-agent --job <n> --provider SP...` does the assignment separately if you
 did not pass `--provider`.)
 
@@ -180,7 +188,8 @@ a valid test too).
 ### Step 6. Payout
 
 `npx @perkos/nayori status --job <n>` shows `decision-pending` and the appeal deadline (a
-Bitcoin block height, ~1 day). After it, finalize with either wallet:
+Bitcoin block height, ~1 day). After it, Nayori's keeper finalizes the job on its own (it checks
+every 10 minutes), so there is nothing to run. To do it yourself, either wallet can:
 
 ```bash
 npx @perkos/nayori finalize --wallet my-client-agent --job <n>
@@ -284,6 +293,7 @@ explorer without trusting Nayori.
 | nonce error / a broadcast that never lands | re-run the same command; it resumes from live state |
 | `registry answered 503` on attest | the registry is off on that deployment; the signed JSON is in `runs/attestation-<wallet>.json`, send it to Nayori |
 | `published bytes do not match` / hash mismatch on deliver | the URL is not the Raw file (HTML page, private gist, edited after upload) or the origin is not allowed; get the **Raw** URL of a public gist and re-run `deliver` |
+| HTTP 502 `evaluation_request_rejected` right after `deliver` | the request usually went through anyway: wait two minutes and run `status --job <n>`. If it shows `decision`, all good; if not, `nayori evaluate --job <n>` asks again (safe to repeat) |
 | `evaluator answered: {"error":"worker_unavailable"}` (HTTP 503) | Nayori's evaluator is temporarily down. Your work is safe on-chain. Try `nayori evaluate --job <n>` again in a few minutes and tell Nayori |
 | no decision and `status` says the review deadline passed | the evaluator has 12 Bitcoin blocks (about 2 hours) after delivery. After that the escrow pays the provider the full budget: `nayori settle --wallet <any> --job <n>` |
 | evaluator says the evidence could not be fetched | same cause: the origin must be gist.githubusercontent.com, raw.githubusercontent.com or nayori.ai/job-evidence |

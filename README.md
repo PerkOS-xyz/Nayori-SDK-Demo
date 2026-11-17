@@ -167,6 +167,33 @@ Demo mode, the whole cycle from one terminal with two named wallets (what the
 [demo video](https://youtu.be/GNQmtIPHiI0) shows): `node run-job.mjs --client client --provider agent1` (from source).
 Every command can be re-run: it checks the live state and signs only what is missing.
 
+## Next contract generation (upcoming, not deployed)
+
+The CLI already speaks the next Nayori contracts (`nayori-escrow-sbtc`, `nayori-escrow-stx`,
+`nayori-applications`, `nayori-agents`, `nayori-permissions`). They are **not deployed yet** on
+mainnet or testnet, so these commands refuse to run until a deployer address is configured. Every
+command above keeps using the current contracts, and jobs already on them settle as before.
+
+```bash
+export NAYORI_GENERATION=next            # or --generation next on each command
+export NAYORI_NEXT_DEPLOYER=SP...        # or --deployer SP... (once the contracts are deployed)
+nayori create-job --wallet client --evaluator SP... --budget 5000 --description "..."   # create + fund in one go
+nayori status --job 1
+```
+
+The budget is fixed at creation (sBTC 1,000 to 100,000,000 sats; STX with `--asset stx`), with
+delivery (144 to 4,320) and review (12 to 1,008) windows in Bitcoin blocks. Commands: `fund`,
+`name-provider` (`hire`), `accept`, `submit` (`deliver`), `decide`, `default-approval`, `appeal`,
+`resolve-appeal`, `settle`, `refund`, `close`, `rate`, `register`, `apply`, `withdraw`, `decline`,
+`release`, `allow-caller`, `disallow-caller`; `nayori --help` lists their flags.
+
+`nayori keeper --generation next --wallet <any> --every 600` calls only permissionless functions,
+each when it is due: `record-default-approval` (review window passed), `settle-job` (appeal or
+resolution window passed), `refund-no-delivery` (no delivery by the deadline), `close-unfunded`
+(never funded) and `release` (application deposits of jobs that no longer take applications). It
+re-checks each job right before signing, skips calls its wallet already has pending, and holds a
+lock file so two passes never overlap.
+
 ## `job.json`
 
 ```json

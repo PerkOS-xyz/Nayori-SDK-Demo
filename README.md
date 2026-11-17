@@ -185,12 +185,15 @@ The budget is fixed at creation (sBTC 1,000 to 100,000,000 sats; STX with `--ass
 delivery (144 to 4,320) and review (12 to 1,008) windows in Bitcoin blocks. Commands: `fund`,
 `name-provider` (`hire`), `accept`, `submit` (`deliver`), `decide`, `default-approval`, `appeal`,
 `resolve-appeal`, `settle`, `refund`, `close`, `rate`, `register`, `apply`, `withdraw`, `decline`,
-`release`, `allow-caller`, `disallow-caller`; `nayori --help` lists their flags.
+`release`, `allow-caller`, `disallow-caller`, `update-agent`, `retry-reputation`, and the role
+handovers `propose-handover`, `cancel-handover`, `accept-handover` (`--role treasury|authority`,
+always signed directly by the role holder or the candidate); `nayori --help` lists their flags.
 
 `nayori keeper --generation next --wallet <any> --every 600` calls only permissionless functions,
 each when it is due: `record-default-approval` (review window passed), `settle-job` (appeal or
 resolution window passed), `refund-no-delivery` (no delivery by the deadline), `close-unfunded`
-(never funded) and `release` (application deposits of jobs that no longer take applications). It
+(never funded), `release` (application deposits of jobs that no longer take applications) and
+`retry-reputation` (a settled job whose outcome the reputation registry did not take). It
 re-checks each job right before signing, skips calls its wallet already has pending, and holds a
 lock file so two passes never overlap.
 

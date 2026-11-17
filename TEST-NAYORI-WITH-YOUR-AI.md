@@ -299,6 +299,28 @@ explorer without trusting Nayori.
 | `REJECT` decision | read the reasons in `status`; fix the deliverable and ask Nayori for another job (a job takes one submission) |
 | want to try without real sats | prefix every command with `NAYORI_NETWORK=testnet` (QA contracts, https://qa.nayori.ai, faucet STX and sBTC) |
 
+## Next contract generation (upcoming, not deployed)
+
+**Skip this section for the test above.** Everything in this guide uses the current mainnet
+contracts. The CLI also speaks the next Nayori contracts, which are **not deployed yet**: every
+next-generation command refuses to run until a deployer address is set, so nothing here can spend
+funds today. The README section "Next contract generation" has the full list.
+
+When they are deployed, add `--generation next --deployer SP...` (or `NAYORI_GENERATION=next` and
+`NAYORI_NEXT_DEPLOYER=SP...`) to the same commands. New ones in that generation:
+
+```text
+update-agent      --generation next --wallet <agent> [--name "..."] [--uri <url>]
+retry-reputation  --generation next --wallet <any> --job <id>   (settled job whose outcome was not recorded)
+propose-handover  --generation next --wallet <holder> --role treasury|authority --candidate SP...
+cancel-handover   --generation next --wallet <holder> --role treasury|authority
+accept-handover   --generation next --wallet <candidate> --role treasury|authority
+keeper            --generation next --wallet <any> [--every 600] [--dry-run]   (also retries reputation)
+```
+
+Role handovers are for the Nayori treasury and appeal authority only; a test wallet never needs
+them. They are always signed directly by the role holder or the candidate.
+
 ## Commands (reference)
 
 ```text

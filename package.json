@@ -42,7 +42,7 @@
     "read-only": "node run-job.mjs --read-only"
   },
   "dependencies": {
-    "@perkos/agent-sdk": "0.9.1",
+    "@perkos/agent-sdk": "file:../PerkOS-Nayori-Agent-SDK-next",
     "@stacks/wallet-sdk": "^7.6.0"
   }
 }

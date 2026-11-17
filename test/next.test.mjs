@@ -17,11 +17,11 @@ const config = X.nextConfig({ network: "testnet", deployer: DEPLOYER });
 const job = (id, status, extra = {}) => ({ id: BigInt(id), status, client: CLIENT, evaluator: EVALUATOR, provider: PROVIDER, budget: 10_000n, deliveryDeadline: 1_000n, deliveryBlocks: 144n, reviewBlocks: 12n, description: "d", ...extra });
 
 /** An in-memory read layer with the NayoriNextClient read methods the CLI uses. */
-function fakeReader({ sbtc = [], stx = [], submissions = {}, decisions = {}, applications = {} } = {}) {
+function fakeReader({ sbtc = [], stx = [], submissions = {}, decisions = {}, applications = {}, pending = {}, agents = {}, roles = { treasury: APPLICANT, authority: KEEPER }, handovers = {} } = {}) {
   const jobs = { sbtc: new Map(sbtc.map((j) => [j.id, j])), stx: new Map(stx.map((j) => [j.id, j])) };
   const reads = [];
   return {
-    jobs, applications, reads,
+    jobs, applications, reads, pending, agents, roles, handovers,
     async getJobCount(asset) { reads.push(["count", asset]); return BigInt(jobs[asset].size); },
     async getJob(asset, id) { reads.push(["job", asset, id]); return jobs[asset].get(BigInt(id)) ?? null; },
     async getSubmission(asset, id) { return submissions[`${asset}:${id}`] ?? null; },
@@ -30,6 +30,11 @@ function fakeReader({ sbtc = [], stx = [], submissions = {}, decisions = {}, app
     async getApplication(id, applicant) { return (applications[String(id)] ?? []).find((a) => a.applicant === applicant) ?? null; },
     async getEscrowBalance() { return 10_000n; },
     async isRegisteredAgent() { return false; },
+    async getReputationPending(asset, id) { reads.push(["pending", asset, id]); return pending[`${asset}:${id}`] ?? null; },
+    async getAgent(wallet) { return agents[wallet] ?? null; },
+    async getTreasury() { return roles.treasury; },
+    async getAppealAuthority() { return roles.authority; },
+    async getHandover(role) { return handovers[role] ?? null; },
   };
 }
 /** A signing stand-in that records each write instead of broadcasting it. */
@@ -335,4 +340,69 @@ test("unknown commands and contract errors are explained", async () => {
   assert.match(X.explainResult("(err u314)"), /ERR_TOO_EARLY/);
   assert.equal(X.createdJobId("(ok u12)"), 12n);
   assert.equal(X.createdJobId("(err u308)"), null);
+});
+
+// ---------- reputation retries ----------
+
+const pendingEntry = (asset = "sbtc", id = 1n) => ({ jobId: BigInt(id), asset, provider: PROVIDER, client: CLIENT, completed: true, value: 10_000n });
+
+test("keeperDueForJob retries reputation only for settled jobs with a pending entry", () => {
+  for (const status of ["completed", "rejected"]) {
+    assert.equal(X.keeperDueForJob({ job: job(1, status), pending: pendingEntry(), tip: 1n }).action, "retry-reputation");
+    assert.equal(X.keeperDueForJob({ job: job(1, status), pending: null, tip: 1n }), null);
+  }
+  for (const status of ["refunded", "expired", "open"]) assert.notEqual(X.keeperDueForJob({ job: job(1, status), pending: pendingEntry(), tip: 1n })?.action, "retry-reputation");
+});
+
+test("the keeper reads pending reputation only for settled jobs and retries each one once", async () => {
+  const reader = fakeReader({
+    sbtc: [job(1, "completed"), job(2, "rejected"), job(3, "completed"), job(4, "funded", { deliveryDeadline: 9_000n })],
+    stx: [job(1, "rejected")],
+    pending: { "sbtc:1": pendingEntry("sbtc", 1n), "stx:1": pendingEntry("stx", 1n) },
+  });
+  const ctx = ctxWith(reader);
+  const r = await X.runNextKeeper(ctx, ctx.wallet);
+  assert.deepEqual(r.due.map((d) => `${d.asset}#${d.id}:${d.action}`), ["sbtc#1:retry-reputation", "stx#1:retry-reputation"]);
+  assert.deepEqual(ctx.wallet.calls, [["retryReputation", { asset: "sbtc", jobId: 1n }], ["retryReputation", { asset: "stx", jobId: 1n }]]);
+  assert.ok(!reader.reads.some(([k, a, id]) => k === "pending" && a === "sbtc" && id === 4n));
+  // what the chain shows after retry-reputation: the entry is gone, so a second pass does nothing
+  delete reader.pending["sbtc:1"]; delete reader.pending["stx:1"];
+  const second = await X.runNextKeeper(ctx, ctx.wallet);
+  assert.equal(second.due.length, 0);
+  assert.equal(ctx.wallet.calls.length, 2);
+});
+
+test("a reputation retry already pending, or done by someone else meanwhile, is skipped", async () => {
+  const reader = fakeReader({ sbtc: [job(1, "completed"), job(2, "completed")], pending: { "sbtc:1": pendingEntry("sbtc", 1n), "sbtc:2": pendingEntry("sbtc", 2n) } });
+  const pending = new Set([X.callKey(config.contracts.escrowSbtc, "retry-reputation", ["u1"])]);
+  const ctx = ctxWith(reader, { pending });
+  const read = reader.getReputationPending.bind(reader);
+  let n = 0;
+  reader.getReputationPending = async (asset, id) => (BigInt(id) === 2n && ++n > 1 ? null : read(asset, id));
+  const r = await X.runNextKeeper(ctx, ctx.wallet);
+  assert.equal(r.skipped.length, 2);
+  assert.equal(ctx.wallet.calls.length, 0);
+  assert.equal(X.itemKey(config, { action: "retry-reputation", asset: "stx", id: 5n }), X.callKey(config.contracts.escrowStx, "retry-reputation", ["u5"]));
+});
+
+test("retry-reputation runs only when an entry is pending", async () => {
+  const reader = fakeReader({ sbtc: [job(1, "completed"), job(2, "completed")], stx: [job(1, "rejected")], pending: { "sbtc:1": pendingEntry(), "stx:1": pendingEntry("stx") } });
+  const refused = ctxWith(reader);
+  await assert.rejects(X.runNextCommand("retry-reputation", refused, args({ "--job": "2" })), /no pending reputation entry/);
+  await assert.rejects(X.runNextCommand("retry-reputation", refused, args({ "--job": "9" })), /not found/);
+  assert.equal(refused.wallet.calls.length, 0);
+  assert.equal(refused.funds.length, 0);
+  const ctx = ctxWith(reader);
+  await X.runNextCommand("retry-reputation", ctx, args({ "--job": "1" }));
+  await X.runNextCommand("retry-reputation", ctx, args({ "--job": "1", "--asset": "stx" }));
+  assert.deepEqual(ctx.wallet.calls, [["retryReputation", { asset: "sbtc", jobId: 1n }], ["retryReputation", { asset: "stx", jobId: 1n }]]);
+});
+
+test("a failed pending-reputation read drops only the retry, not the deposit release", async () => {
+  const reader = fakeReader({ sbtc: [job(1, "completed")], applications: { 1: [{ applicant: APPLICANT, deposit: 500n }] } });
+  reader.getReputationPending = async () => { throw new Error("HTTP 429"); };
+  const errors = [];
+  const { due } = await X.planNextKeeper(reader, { tip: 2_000n, onError: (asset, id, e) => errors.push(`${asset}#${id}: ${e.message}`) });
+  assert.deepEqual(due.map((d) => d.action), ["release"]);
+  assert.deepEqual(errors, ["sbtc#1: HTTP 429"]);
 });

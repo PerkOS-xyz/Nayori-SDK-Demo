@@ -24,6 +24,7 @@ const jobCv = (status, budget = 10_000n) => Cl.some(Cl.tuple({
 
 function chain() {
   // sBTC: #1 submitted (review closed), #2 decided (appeal closed), #3 completed with one deposit left
+  //       and an outcome the reputation registry did not take
   // STX:  #1 accepted past its deadline (2 STX budget)
   const sbtc = { 1: jobCv(4), 2: jobCv(5), 3: jobCv(7) };
   const stx = { 1: jobCv(3, 2_000_000n) };
@@ -37,6 +38,7 @@ function chain() {
       case "get-decision": return Cl.some(Cl.tuple({ decision: Cl.uint(1n), "by-default": Cl.bool(false), "evidence-hash": Cl.bufferFromHex("11".repeat(32)), "appeal-deadline": Cl.uint(200n), appellant: Cl.none(), "resolution-deadline": Cl.none() }));
       case "get-escrow-balance": return escrow === stx ? Cl.uint(2_000_000n) : Cl.uint(10_000n);
       case "get-applications": return Cl.list(id === 3 ? [Cl.tuple({ applicant: Cl.principal(APPLICANT), deposit: Cl.uint(500n) })] : []);
+      case "get-reputation-pending": return escrow === sbtc && id === 3 ? Cl.some(Cl.tuple({ provider: Cl.principal(PROVIDER), client: Cl.principal(CLIENT), completed: Cl.bool(true), value: Cl.uint(10_000n) })) : Cl.none();
       case "get-application": return id === 3 ? Cl.some(Cl.tuple({ applicant: Cl.principal(APPLICANT), deposit: Cl.uint(500n) })) : Cl.none();
       default: throw new Error(`unexpected read ${call.functionName}`);
     }
@@ -58,6 +60,7 @@ test("a keeper pass through NayoriNextClient builds the expected contract calls 
   assert.deepEqual(plans.map((p) => `${p.contract.split(".")[1]}::${p.functionName}`), [
     "nayori-escrow-sbtc::record-default-approval",
     "nayori-escrow-sbtc::settle-job",
+    "nayori-escrow-sbtc::retry-reputation",
     "nayori-applications::release",
     "nayori-escrow-stx::refund-no-delivery",
   ]);
@@ -65,6 +68,7 @@ test("a keeper pass through NayoriNextClient builds the expected contract calls 
   assert.equal(plans[0].postConditions.length, 0); // no funds move
   assert.equal(plans[1].postConditions.length, 1); // escrow sends exactly the budget
   assert.equal(plans[1].postConditions[0].amount, "10000");
-  assert.equal(plans[2].postConditions[0].amount, "500"); // the recorded deposit goes back
-  assert.equal(plans[3].postConditions[0].amount, "2000000"); // STX: micro-STX back to the client
+  assert.equal(plans[2].postConditions.length, 0); // reputation retry: no funds move
+  assert.equal(plans[3].postConditions[0].amount, "500"); // the recorded deposit goes back
+  assert.equal(plans[4].postConditions[0].amount, "2000000"); // STX: micro-STX back to the client
 });

@@ -22,6 +22,8 @@ export const GENERATIONS = ["current", "next"];
 export const ASSETS = ["sbtc", "stx"];
 /** Statuses in which a job still takes applications (nayori-applications `accepting`). */
 export const ACCEPTING = new Set(["open", "funded", "offered"]);
+/** Statuses reached through settlement, where the escrow may hold a pending reputation entry. */
+export const SETTLED = new Set(["completed", "rejected"]);
 export const DEFAULT_DELIVERY_BLOCKS = 144n;
 export const DEFAULT_REVIEW_BLOCKS = 144n;
 
@@ -127,9 +129,10 @@ export function createdJobId(repr) {
  *   disputed,  tip >  resolution deadline  -> settle-job
  *   funded/offered/accepted, tip >= deadline -> refund-no-delivery
  *   open,      tip >= deadline             -> close-unfunded
+ *   completed/rejected with a pending reputation entry -> retry-reputation (any block)
  * Returns null when nothing is due.
  */
-export function keeperDueForJob({ job, submission, decision, tip }) {
+export function keeperDueForJob({ job, submission, decision, pending, tip }) {
   if (!job) return null;
   const t = BigInt(tip);
   switch (job.status) {
@@ -150,18 +153,26 @@ export function keeperDueForJob({ job, submission, decision, tip }) {
     case "open":
       if (t >= job.deliveryDeadline) return { action: "close-unfunded", why: `never funded, deadline ${job.deliveryDeadline} passed` };
       return null;
+    case "completed":
+    case "rejected":
+      if (pending) return { action: "retry-reputation", why: `${job.status}, the reputation registry did not take the outcome at settlement` };
+      return null;
     default:
       return null;
   }
 }
 
-/** Reads one job with whatever its status needs to decide. */
-async function readJobState(read, asset, id) {
+/**
+ * Reads one job with whatever its status needs to decide. A failed pending-reputation read only
+ * drops the retry (reported through onError), so it never blocks the job's other keeper work.
+ */
+async function readJobState(read, asset, id, onError = () => {}) {
   const job = await read.getJob(asset, id);
   if (!job) return { job: null };
   const submission = job.status === "submitted" ? await read.getSubmission(asset, id) : null;
   const decision = job.status === "decided" || job.status === "disputed" ? await read.getDecision(asset, id) : null;
-  return { job, submission, decision };
+  const pending = SETTLED.has(job.status) ? await read.getReputationPending(asset, id).catch((error) => { onError(error); return null; }) : null;
+  return { job, submission, decision, pending };
 }
 
 /**
@@ -176,7 +187,7 @@ export async function planNextKeeper(read, { tip, assets = ASSETS, onError = () 
     counts[asset] = count;
     for (let id = 1n; id <= count; id++) {
       let state;
-      try { state = await readJobState(read, asset, id); } catch (error) { onError(asset, id, error); continue; }
+      try { state = await readJobState(read, asset, id, (error) => onError(asset, id, error)); } catch (error) { onError(asset, id, error); continue; }
       if (!state.job) continue;
       const item = keeperDueForJob({ ...state, tip });
       if (item) due.push({ asset, id, ...item });
@@ -216,6 +227,7 @@ async function send(nayori, item) {
     case "refund-no-delivery": return nayori.refundNoDelivery(item.asset, item.id);
     case "close-unfunded": return nayori.closeUnfunded({ asset: item.asset, jobId: item.id });
     case "release": return nayori.releaseApplication(item.id, item.applicant);
+    case "retry-reputation": return nayori.retryReputation({ asset: item.asset, jobId: item.id });
     default: throw new Error(`unknown keeper action ${item.action}`);
   }
 }
@@ -504,6 +516,18 @@ export const NEXT_COMMANDS = {
     const receipt = await w.nayori.disallowContractCaller({ caller, target });
     await ctx.confirm(w.nayori, receipt, "disallow-contract-caller");
     return { caller, target };
+  },
+  "retry-reputation": async (ctx, a) => {
+    const asset = parseAsset(a.flag("--asset"));
+    const id = parseJobId(a.flag("--job"));
+    const job = await requireJob(ctx, asset, id);
+    const pending = SETTLED.has(job.status) ? await ctx.reader.getReputationPending(asset, id) : null;
+    if (!pending) throw new Error(`${asset} job #${id} is ${job.status} and has no pending reputation entry; nothing to retry`);
+    const w = await signer(ctx, a);
+    const receipt = await w.nayori.retryReputation({ asset, jobId: id });
+    await ctx.confirm(w.nayori, receipt, "retry-reputation");
+    ctx.say(`outcome of ${asset} job #${id} recorded for ${pending.provider}`);
+    return { asset, id };
   },
   status: async (ctx, a) => {
     const asset = parseAsset(a.flag("--asset"));

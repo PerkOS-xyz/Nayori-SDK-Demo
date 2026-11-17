@@ -31,12 +31,13 @@
 //   nayori resolve-appeal --generation next --wallet <authority> --job <id> --decision approve|reject --resolution-hash <hex> | --resolution-file <path>
 //   nayori rate       --generation next --wallet <client> --job <id> --score 1..5
 //   nayori register   --generation next --wallet <agent> --name "..." [--uri <url>]
+//   nayori retry-reputation --generation next --wallet <any> --job <id>   # replay an outcome the registry did not take
 //   nayori apply      --generation next --wallet <agent> --job <id> --deposit <sats>
 //   nayori withdraw   --generation next --wallet <agent> --job <id>
 //   nayori decline | release  --generation next --wallet <w> --job <id> --applicant <SP...>
 //   nayori allow-caller | disallow-caller  --generation next --wallet <w> --caller <SP...contract> --target escrowSbtc|escrowStx|agents|applications [--until <block>]
 //   nayori status     --generation next --job <id>
-//   nayori keeper     --generation next --wallet <any> [--every 600] [--dry-run]   # default approvals, settlements, refunds, closes, deposit releases
+//   nayori keeper     --generation next --wallet <any> [--every 600] [--dry-run]   # default approvals, settlements, refunds, closes, deposit releases, reputation retries
 //
 // Wallets live in ~/.nayori/wallets/<name>.env (mode 0600). Keys are read only when signing.
 // NAYORI_NETWORK=testnet switches every command to the QA contracts.

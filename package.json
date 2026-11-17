@@ -40,7 +40,9 @@
   "scripts": {
     "nayori": "node nayori.mjs",
     "demo": "node run-job.mjs",
-    "read-only": "node run-job.mjs --read-only"
+    "read-only": "node run-job.mjs --read-only",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check nayori.mjs && node --check lib.mjs && node --check next.mjs && node --check run-job.mjs"
   },
   "dependencies": {
     "@perkos/agent-sdk": "file:../PerkOS-Nayori-Agent-SDK-next",

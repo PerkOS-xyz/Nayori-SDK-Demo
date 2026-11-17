@@ -24,6 +24,8 @@ export const ASSETS = ["sbtc", "stx"];
 export const ACCEPTING = new Set(["open", "funded", "offered"]);
 /** Statuses reached through settlement, where the escrow may hold a pending reputation entry. */
 export const SETTLED = new Set(["completed", "rejected"]);
+/** The two roles in nayori-roles; "authority" is short for the appeal authority. */
+export const ROLES = { treasury: "treasury", authority: "appeal-authority", "appeal-authority": "appeal-authority" };
 export const DEFAULT_DELIVERY_BLOCKS = 144n;
 export const DEFAULT_REVIEW_BLOCKS = 144n;
 
@@ -107,6 +109,18 @@ export function deliverableFrom(flag, readFile = readFileSync) {
   throw new Error("--deliverable <text up to 64 chars> or --file <path> (its sha256 goes on-chain) is required");
 }
 const isAddress = (a) => /^S[PTMN][0-9A-Z]{38,40}$/.test(a ?? "");
+
+/** --role treasury|authority (or appeal-authority) -> the SDK role name. */
+export function parseRole(value) {
+  const r = ROLES[String(value ?? "").trim().toLowerCase()];
+  if (!r) throw new Error('--role must be "treasury" or "authority" (the appeal authority)');
+  return r;
+}
+/** Agent name (1 to 64) and uri (0 to 256), printable ASCII as nayori-agents stores them. */
+export function checkAgentFields(name, uri) {
+  if (!/^[\x20-\x7e]{1,64}$/.test(name ?? "")) throw new Error("--name must be 1 to 64 printable ASCII characters");
+  if (!/^[\x20-\x7e]{0,256}$/.test(uri ?? "")) throw new Error("--uri must be at most 256 printable ASCII characters");
+}
 
 /** "(err u314)" -> "(err u314) ERR_TOO_EARLY: The window ..." */
 export function explainResult(repr) {
@@ -517,6 +531,22 @@ export const NEXT_COMMANDS = {
     await ctx.confirm(w.nayori, receipt, "disallow-contract-caller");
     return { caller, target };
   },
+  "update-agent": async (ctx, a) => {
+    const nameFlag = a.flag("--name");
+    const uriFlag = a.flag("--uri");
+    if (nameFlag === undefined && uriFlag === undefined) throw new Error('--name "<agent name>" and/or --uri <url> is required');
+    const w = await signer(ctx, a);
+    const agent = await ctx.reader.getAgent(w.address);
+    if (!agent) throw new Error(`wallet ${w.address} has no agent in nayori-agents yet; register first: nayori register --generation next --wallet ${w.name} --name "..."`);
+    const name = nameFlag ?? agent.name;
+    const uri = uriFlag ?? agent.uri;
+    checkAgentFields(name, uri);
+    if (name === agent.name && uri === agent.uri) { ctx.say(`agent of ${w.address} already has this name and uri; nothing to update`); return { address: w.address }; }
+    const receipt = await w.nayori.updateAgent({ name, uri });
+    await ctx.confirm(w.nayori, receipt, "update-agent");
+    ctx.say(`agent of ${w.address} is now "${name}"${uri ? ` (${uri})` : ""}`);
+    return { address: w.address };
+  },
   "retry-reputation": async (ctx, a) => {
     const asset = parseAsset(a.flag("--asset"));
     const id = parseJobId(a.flag("--job"));
@@ -528,6 +558,42 @@ export const NEXT_COMMANDS = {
     await ctx.confirm(w.nayori, receipt, "retry-reputation");
     ctx.say(`outcome of ${asset} job #${id} recorded for ${pending.provider}`);
     return { asset, id };
+  },
+  "propose-handover": async (ctx, a) => {
+    const role = parseRole(a.flag("--role"));
+    const candidate = a.flag("--candidate");
+    if (!isAddress(candidate)) throw new Error("--candidate <address> is required");
+    const [treasury, authority] = await Promise.all([ctx.reader.getTreasury(), ctx.reader.getAppealAuthority()]);
+    const holder = role === "treasury" ? treasury : authority;
+    if (candidate === treasury || candidate === authority) throw new Error(`${candidate} already holds a role; the two roles are always different wallets`);
+    const w = await signer(ctx, a);
+    if (w.address !== holder) throw new Error(`only the current ${role} (${holder}) can propose a handover, not wallet "${w.name}"`);
+    const receipt = await w.nayori.proposeHandover({ role, candidate });
+    await ctx.confirm(w.nayori, receipt, "propose-handover");
+    ctx.say(`${candidate} can accept the ${role} role after ${NAYORI_NEXT_LIMITS.handoverDelayBlocks} Bitcoin blocks: nayori accept-handover --generation next --wallet <candidate> --role ${a.flag("--role")}`);
+    return { role, candidate };
+  },
+  "cancel-handover": async (ctx, a) => {
+    const role = parseRole(a.flag("--role"));
+    const [holder, handover] = await Promise.all([role === "treasury" ? ctx.reader.getTreasury() : ctx.reader.getAppealAuthority(), ctx.reader.getHandover(role)]);
+    if (!handover) throw new Error(`no ${role} handover is pending`);
+    const w = await signer(ctx, a);
+    if (w.address !== holder) throw new Error(`only the current ${role} (${holder}) can cancel the handover, not wallet "${w.name}"`);
+    const receipt = await w.nayori.cancelHandover(role);
+    await ctx.confirm(w.nayori, receipt, "cancel-handover");
+    return { role };
+  },
+  "accept-handover": async (ctx, a) => {
+    const role = parseRole(a.flag("--role"));
+    const [handover, tip] = await Promise.all([ctx.reader.getHandover(role), ctx.tip()]);
+    if (!handover) throw new Error(`no ${role} handover is pending`);
+    const w = await signer(ctx, a);
+    if (w.address !== handover.candidate) throw new Error(`the ${role} handover is proposed to ${handover.candidate}, not to wallet "${w.name}"`);
+    if (BigInt(tip) < handover.readyAt) throw new Error(`the ${role} handover can be accepted from Bitcoin block ${handover.readyAt} (now ${tip})`);
+    const receipt = await w.nayori.acceptHandover(role);
+    await ctx.confirm(w.nayori, receipt, "accept-handover");
+    ctx.say(`${w.address} now holds the ${role} role; jobs created from now on pin it`);
+    return { role };
   },
   status: async (ctx, a) => {
     const asset = parseAsset(a.flag("--asset"));

@@ -31,7 +31,11 @@
 //   nayori resolve-appeal --generation next --wallet <authority> --job <id> --decision approve|reject --resolution-hash <hex> | --resolution-file <path>
 //   nayori rate       --generation next --wallet <client> --job <id> --score 1..5
 //   nayori register   --generation next --wallet <agent> --name "..." [--uri <url>]
+//   nayori update-agent --generation next --wallet <agent> [--name "..."] [--uri <url>]   # change the agent's name or uri
 //   nayori retry-reputation --generation next --wallet <any> --job <id>   # replay an outcome the registry did not take
+//   nayori propose-handover --generation next --wallet <holder> --role treasury|authority --candidate <SP...>
+//   nayori cancel-handover | accept-handover  --generation next --wallet <holder|candidate> --role treasury|authority
+//                     # role handovers are always signed directly by the holder or the candidate, never through a helper
 //   nayori apply      --generation next --wallet <agent> --job <id> --deposit <sats>
 //   nayori withdraw   --generation next --wallet <agent> --job <id>
 //   nayori decline | release  --generation next --wallet <w> --job <id> --applicant <SP...>

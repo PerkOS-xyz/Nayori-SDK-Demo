@@ -398,6 +398,65 @@ test("retry-reputation runs only when an entry is pending", async () => {
   assert.deepEqual(ctx.wallet.calls, [["retryReputation", { asset: "sbtc", jobId: 1n }], ["retryReputation", { asset: "stx", jobId: 1n }]]);
 });
 
+// ---------- agent update ----------
+
+test("update-agent keeps the field not given, and refuses an unregistered wallet or bad fields", async () => {
+  const reader = fakeReader({ agents: { [KEEPER]: { wallet: KEEPER, name: "Agent One", uri: "https://a.example", registeredAt: 1n } } });
+  const ctx = ctxWith(reader);
+  await X.runNextCommand("update-agent", ctx, args({ "--uri": "https://b.example" }));
+  await X.runNextCommand("update-agent", ctx, args({ "--name": "Agent Two" }));
+  assert.deepEqual(ctx.wallet.calls, [["updateAgent", { name: "Agent One", uri: "https://b.example" }], ["updateAgent", { name: "Agent Two", uri: "https://a.example" }]]);
+  const same = ctxWith(reader);
+  await X.runNextCommand("update-agent", same, args({ "--name": "Agent One" }));
+  assert.equal(same.wallet.calls.length, 0);
+  await assert.rejects(X.runNextCommand("update-agent", ctxWith(reader), args({})), /--name .* and\/or --uri/);
+  await assert.rejects(X.runNextCommand("update-agent", ctxWith(reader), args({ "--name": "x".repeat(65) })), /1 to 64/);
+  await assert.rejects(X.runNextCommand("update-agent", ctxWith(reader), args({ "--uri": "u".repeat(257) })), /at most 256/);
+  await assert.rejects(X.runNextCommand("update-agent", ctxWith(reader, { wallet: fakeWallet(CLIENT) }), args({ "--name": "New" })), /register first/);
+});
+
+// ---------- role handovers ----------
+
+test("parseRole accepts treasury and authority", () => {
+  assert.equal(X.parseRole("treasury"), "treasury");
+  assert.equal(X.parseRole("Authority"), "appeal-authority");
+  assert.equal(X.parseRole("appeal-authority"), "appeal-authority");
+  assert.throws(() => X.parseRole("owner"), /--role must be/);
+  assert.throws(() => X.parseRole(undefined), /--role must be/);
+});
+
+test("propose-handover is signed by the current holder for a candidate that holds no role", async () => {
+  const reader = fakeReader({ roles: { treasury: KEEPER, authority: APPLICANT } });
+  const ctx = ctxWith(reader);
+  await X.runNextCommand("propose-handover", ctx, args({ "--role": "treasury", "--candidate": PROVIDER }));
+  assert.deepEqual(ctx.wallet.calls, [["proposeHandover", { role: "treasury", candidate: PROVIDER }]]);
+  await assert.rejects(X.runNextCommand("propose-handover", ctxWith(reader), args({ "--role": "authority", "--candidate": PROVIDER })), /only the current appeal-authority/);
+  await assert.rejects(X.runNextCommand("propose-handover", ctxWith(reader), args({ "--role": "treasury", "--candidate": APPLICANT })), /already holds a role/);
+  await assert.rejects(X.runNextCommand("propose-handover", ctxWith(reader), args({ "--role": "treasury" })), /--candidate/);
+});
+
+test("cancel-handover needs the holder and a pending handover", async () => {
+  const handover = { role: "appeal-authority", candidate: PROVIDER, readyAt: 1_144n };
+  const reader = fakeReader({ roles: { treasury: APPLICANT, authority: KEEPER }, handovers: { "appeal-authority": handover } });
+  await assert.rejects(X.runNextCommand("cancel-handover", ctxWith(reader), args({ "--role": "treasury" })), /no treasury handover is pending/);
+  await assert.rejects(X.runNextCommand("cancel-handover", ctxWith(reader, { wallet: fakeWallet(PROVIDER) }), args({ "--role": "authority" })), /only the current appeal-authority/);
+  const ctx = ctxWith(reader);
+  await X.runNextCommand("cancel-handover", ctx, args({ "--role": "authority" }));
+  assert.deepEqual(ctx.wallet.calls, [["cancelHandover", "appeal-authority"]]);
+});
+
+test("accept-handover needs the candidate and the delay to have passed", async () => {
+  const reader = fakeReader({ handovers: { treasury: { role: "treasury", candidate: PROVIDER, readyAt: 1_144n } } });
+  await assert.rejects(X.runNextCommand("accept-handover", ctxWith(reader, { tip: 2_000n }), args({ "--role": "treasury" })), /proposed to/);
+  const early = ctxWith(reader, { tip: 1_143n, wallet: fakeWallet(PROVIDER) });
+  await assert.rejects(X.runNextCommand("accept-handover", early, args({ "--role": "treasury" })), /from Bitcoin block 1144/);
+  assert.equal(early.wallet.calls.length, 0);
+  await assert.rejects(X.runNextCommand("accept-handover", ctxWith(reader), args({ "--role": "authority" })), /no appeal-authority handover/);
+  const ctx = ctxWith(reader, { tip: 1_144n, wallet: fakeWallet(PROVIDER) });
+  await X.runNextCommand("accept-handover", ctx, args({ "--role": "treasury" }));
+  assert.deepEqual(ctx.wallet.calls, [["acceptHandover", "treasury"]]);
+});
+
 test("a failed pending-reputation read drops only the retry, not the deposit release", async () => {
   const reader = fakeReader({ sbtc: [job(1, "completed")], applications: { 1: [{ applicant: APPLICANT, deposit: 500n }] } });
   reader.getReputationPending = async () => { throw new Error("HTTP 429"); };

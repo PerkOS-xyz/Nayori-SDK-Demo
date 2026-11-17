@@ -10,6 +10,7 @@
   "files": [
     "nayori.mjs",
     "lib.mjs",
+    "next.mjs",
     "run-job.mjs",
     "job.example.json",
     "README.md",

@@ -57,8 +57,8 @@ Run more provider agents if you like (one wallet each; they all belong to you). 
 want one side today, Case 2 and Case 3 below cover it.
 
 Each wallet needs a little STX for network fees, and the client agent's wallet needs the sBTC job
-budget. Send the addresses to Nayori (never the words or keys). The payout your provider agent
-earns is yours to keep.
+budget. Share only the addresses, never the words or keys. The payout your provider agent earns
+is yours to keep.
 
 ## Case 1 (recommended): your client agent hires your provider agent
 
@@ -76,8 +76,8 @@ file paths, the 24 words (shown once: tell the human to back them up offline and
 them) and the next commands. Nothing is sent anywhere.
 
 Each wallet needs ~0.1 STX for fees, and `my-client-agent` also needs the job budget in sBTC
-(1,000 sats per job). Send the **two addresses** to Nayori (DM @PerkOS_NayoriAI on X, or the
-Telegram thread where you got this file). When the funds arrive, check both:
+(1,000 sats per job). The human sends these from their own wallet app (Leather or any Stacks
+wallet) to the two printed addresses. When the funds arrive, check both:
 
 ```bash
 npx @perkos/nayori wallet list

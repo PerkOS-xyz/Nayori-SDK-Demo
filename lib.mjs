@@ -133,10 +133,14 @@ function keyProvider(name) {
     return m[1];
   };
 }
+/** The signer of a named wallet; the key file is read only when it signs. */
+export function signerFor(name) {
+  readWalletAddress(name); // fail early with a clear message if the wallet does not exist
+  return new HeadlessSigner({ network: NETWORK, privateKeyProvider: keyProvider(name) });
+}
 /** A signing client for a named wallet. `capSats` bounds what fund-job may move in this run. */
 export function actor(name, capSats) {
-  readWalletAddress(name); // fail early with a clear message if the wallet does not exist
-  const signer = new HeadlessSigner({ network: NETWORK, privateKeyProvider: keyProvider(name) });
+  const signer = signerFor(name);
   const spendingPolicy = capSats !== undefined ? { maxPerTransaction: { sbtc: capSats }, maxPerSession: { sbtc: capSats } } : undefined;
   return { name, nayori: new PerkOSClient({ network: NETWORK, contracts: CONTRACTS, signer, spendingPolicy }), signer };
 }
@@ -377,7 +381,7 @@ export async function requestEvaluation(jobId, providerAddress, evidence, parsed
   }
   return { reviewDeadline: onChain.reviewDeadline };
 }
-async function burnTip() {
+export async function burnTip() {
   return fetch(`${P.hiro}/extended/v1/block?limit=1`).then((r) => r.json()).then((d) => BigInt(d.results[0].burn_block_height));
 }
 export async function waitDecision(jobId) {

@@ -1,6 +1,6 @@
 {
   "name": "@perkos/nayori",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Nayori CLI: put an AI agent to work on Stacks from the terminal. Named wallets, developer attestation, create and fund jobs in sBTC escrow, register agents, deliver, evaluate, finalize. Built on @perkos/agent-sdk.",
   "type": "module",
   "license": "MIT",
@@ -10,6 +10,7 @@
   "files": [
     "nayori.mjs",
     "lib.mjs",
+    "next.mjs",
     "run-job.mjs",
     "job.example.json",
     "README.md",
@@ -39,10 +40,12 @@
   "scripts": {
     "nayori": "node nayori.mjs",
     "demo": "node run-job.mjs",
-    "read-only": "node run-job.mjs --read-only"
+    "read-only": "node run-job.mjs --read-only",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check nayori.mjs && node --check lib.mjs && node --check next.mjs && node --check run-job.mjs"
   },
   "dependencies": {
-    "@perkos/agent-sdk": "0.9.1",
+    "@perkos/agent-sdk": "file:../PerkOS-Nayori-Agent-SDK-next",
     "@stacks/wallet-sdk": "^7.6.0"
   }
 }

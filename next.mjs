@@ -1,17 +1,21 @@
 // The next Nayori contract generation (nayori-escrow-sbtc, nayori-escrow-stx, nayori-applications,
-// nayori-agents, nayori-permissions ...). UPCOMING, NOT DEPLOYED YET: every command here needs the
-// deployer address from --deployer or NAYORI_NEXT_DEPLOYER, and refuses to run without one.
-// Selected with --generation next (or NAYORI_GENERATION=next); the current contracts stay the default.
+// nayori-agents, nayori-permissions ...), live on mainnet and testnet since 2026-11-24 and the
+// default for every job command. The SDK knows the live deployments; --deployer (or
+// NAYORI_NEXT_DEPLOYER) only targets another one, such as a local devnet. --generation current
+// (or NAYORI_GENERATION=current) reaches jobs created on the earlier contracts.
 //
 // The keeper logic is pure (keeperDueForJob, planNextKeeper, runNextKeeper) and takes its reads and
 // writes from a context object, so it is tested without the network.
 
 import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync, constants } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync, writeSync, constants } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import {
   NayoriNextClient,
   NAYORI_NEXT_LIMITS,
+  evaluationJobId,
+  prepareEvaluationJob,
+  prepareEvaluationSubmission,
   assertNayoriNextDeployed,
   describeNayoriNextError,
   quoteNayoriNextFee,
@@ -31,20 +35,20 @@ export const DEFAULT_REVIEW_BLOCKS = 144n;
 
 // ---------- selection and configuration ----------
 
-/** "current" unless --generation or NAYORI_GENERATION says "next". */
+/** "next" unless --generation or NAYORI_GENERATION says "current". */
 export function generationOf(flagValue, env = process.env) {
-  const g = String(flagValue ?? env.NAYORI_GENERATION ?? "current").trim().toLowerCase();
+  const g = String(flagValue ?? env.NAYORI_GENERATION ?? "next").trim().toLowerCase();
   if (!GENERATIONS.includes(g)) throw new Error(`--generation must be "current" or "next" (got "${g}")`);
   return g;
 }
 
-/** The deployer of the next contracts, from --deployer or NAYORI_NEXT_DEPLOYER. Undefined = not deployed. */
+/** Another deployment of the next contracts, from --deployer or NAYORI_NEXT_DEPLOYER. Undefined = the live one. */
 export function nextDeployer(flagValue, env = process.env) {
   const d = flagValue ?? env.NAYORI_NEXT_DEPLOYER;
   return d && d.trim() ? d.trim() : undefined;
 }
 
-/** Resolved SDK config; `deployed` is false until a real deployer is given. */
+/** Resolved SDK config: the live deployment of the network unless another deployer is given. */
 export function nextConfig({ network, deployer }) {
   return resolveNayoriNextConfig({ network, ...(deployer ? { deployer } : {}) });
 }
@@ -53,8 +57,7 @@ export function requireDeployed(config) {
   try {
     assertNayoriNextDeployed(config);
   } catch {
-    throw new Error(`the next Nayori contracts are not deployed on ${config.network} yet. ` +
-      "When they are, pass --deployer <address> or set NAYORI_NEXT_DEPLOYER. The current contracts need no flag.");
+    throw new Error(`no next Nayori deployment is configured for ${config.network}; check --deployer or NAYORI_NEXT_DEPLOYER`);
   }
 }
 
@@ -335,30 +338,97 @@ async function permissionless(ctx, a, action) {
   const [state, tip] = await Promise.all([readJobState(ctx.reader, asset, id), ctx.tip()]);
   if (!state.job) throw new Error(`${asset} job #${id} not found`);
   const due = keeperDueForJob({ ...state, tip });
-  if (due?.action !== action) throw new Error(`${asset} job #${id} is ${state.job.status}; ${action} is not due at Bitcoin block ${tip}${due ? ` (due instead: ${due.action})` : ""}. See: nayori status --generation next --job ${id}${asset === "stx" ? " --asset stx" : ""}`);
+  if (due?.action !== action) throw new Error(`${asset} job #${id} is ${state.job.status}; ${action} is not due at Bitcoin block ${tip}${due ? ` (due instead: ${due.action})` : ""}. See: nayori status --job ${id}${asset === "stx" ? " --asset stx" : ""}`);
   const w = await signer(ctx, a);
   const receipt = await send(w.nayori, { action, asset, id });
   await ctx.confirm(w.nayori, receipt, action);
   return { asset, id };
 }
 
+// ---------- evaluated jobs (Nayori's managed evaluator) ----------
+
+const escrowOf = (ctx, asset) => ctx.config.contracts[asset === "sbtc" ? "escrowSbtc" : "escrowStx"];
+export const evidencePath = (ctx, asset, id) => join(ctx.outDir ?? ".", `next-${asset}-job-${id}-evidence.json`);
+
+/** The description with task, criteria and their commitment, bound to this escrow, client and evaluator. */
+export async function committedDescription(ctx, { asset, client, evaluator, task, criteria }) {
+  const prepared = await prepareEvaluationJob({
+    network: ctx.config.network, asset, contract: escrowOf(ctx, asset), client, evaluator,
+    description: ctx.plainDescription(task, criteria), acceptanceCriteria: ctx.toAcceptanceCriteria(criteria),
+  });
+  return prepared.description;
+}
+export function hasCommittedCriteria(ctx, description) {
+  try { ctx.parseJobDescription(description); return true; } catch { return false; }
+}
+/** Verifies the published deliverable against the local file and builds its on-chain commitment. */
+export async function evidenceSubmission(ctx, a, { asset, id, job, provider }) {
+  const parsed = ctx.parseJobDescription(job.description);
+  const file = a.flag("--file");
+  if (!file) throw new Error("--file <deliverable.txt> is required: the exact file you published");
+  const local = ctx.readFile(resolve(file));
+  if (local.byteLength === 0 || local.byteLength > 8192) throw new Error("the deliverable must be 1 to 8192 bytes of UTF-8 text");
+  const localSha = createHash("sha256").update(local).digest("hex");
+  ctx.say(`deliverable: ${file} (${local.byteLength} bytes, sha256 ${localSha.slice(0, 16)}...)`,
+    "publish that exact file as text/plain on an allowed origin: a public Gist raw URL,",
+    "raw.githubusercontent.com or nayori.ai/job-evidence, then paste its URL.");
+  const uri = a.flag("--url") ?? ctx.env?.NAYORI_EVIDENCE_URL ?? (ctx.ask ? await ctx.ask("   evidence URL > ") : undefined);
+  if (!uri) throw new Error("publish the file as text/plain (a public Gist raw URL, raw.githubusercontent.com or nayori.ai/job-evidence) and pass --url <its URL>");
+  const res = await (ctx.fetch ?? fetch)(uri, { redirect: "error" });
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const mediaType = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+  if (!res.ok || sha !== localSha || mediaType !== "text/plain") throw new Error(`published evidence does not match the file (${res.status} ${mediaType} ${sha.slice(0, 16)})`);
+  const evidence = [{ id: "deliverable", uri, sha256: sha, mediaType, sizeBytes: bytes.byteLength }];
+  const submission = await prepareEvaluationSubmission({
+    network: ctx.config.network, asset, contract: escrowOf(ctx, asset), jobId: String(id), client: job.client, provider,
+    evaluator: job.evaluator, description: parsed.plain, acceptanceCriteria: ctx.toAcceptanceCriteria(parsed.criteria), evidence,
+  });
+  if (submission.criteriaHash !== parsed.criteriaHash) throw new Error("criteria commitment mismatch with the chain");
+  ctx.say(`verified online: ${bytes.byteLength} bytes, sha256 ${sha.slice(0, 16)}...; evidence commitment ${submission.evidenceHash.slice(0, 16)}...`);
+  return { deliverable: submission.deliverable, evidence, parsed };
+}
+export function saveEvaluationEvidence(ctx, asset, id, saved) {
+  const path = evidencePath(ctx, asset, id);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(saved, null, 2) + "\n");
+  ctx.say(`saved ${path}`);
+}
+/** The request Nayori's evaluator admits: every field is re-read from the chain and re-hashed there. */
+export async function evaluationRequestBody(ctx, { asset, id, job, submission, evidence, criteria }) {
+  const contract = escrowOf(ctx, asset);
+  return {
+    commitmentVersion: "1",
+    evaluationId: await evaluationJobId({ network: ctx.config.network, contract, jobId: String(id) }),
+    network: ctx.config.network, asset, contract, jobId: String(id),
+    job: { client: job.client, provider: job.provider, evaluator: job.evaluator, status: "submitted",
+      reviewDeadlineBurn: String(submission.reviewDeadline), description: job.description },
+    acceptanceCriteria: ctx.toAcceptanceCriteria(criteria), evidence,
+  };
+}
+
 export const NEXT_COMMANDS = {
   "create-job": async (ctx, a) => {
     const asset = parseAsset(a.flag("--asset"));
     const job = a.jobFile?.() ?? {};
-    const evaluator = a.flag("--evaluator") ?? ctx.env?.NAYORI_NEXT_EVALUATOR;
-    if (!isAddress(evaluator)) throw new Error("--evaluator <address> is required (or NAYORI_NEXT_EVALUATOR); the next generation has no default evaluator yet");
+    const evaluator = a.flag("--evaluator") ?? ctx.env?.NAYORI_NEXT_EVALUATOR ?? ctx.defaultEvaluator;
+    if (!isAddress(evaluator)) throw new Error("--evaluator <address> is required (or NAYORI_NEXT_EVALUATOR)");
     const budget = parseUint(a.flag("--budget") ?? (asset === "sbtc" ? job.budgetSats : undefined), "--budget");
     const { min, max } = NAYORI_NEXT_LIMITS.budget[asset];
     if (budget < min || budget > max) throw new Error(`--budget must be ${min} to ${max} ${units(asset)}`);
     const deliveryBlocks = parseUint(a.flag("--delivery-blocks"), "--delivery-blocks", DEFAULT_DELIVERY_BLOCKS);
     const reviewBlocks = parseUint(a.flag("--review-blocks"), "--review-blocks", DEFAULT_REVIEW_BLOCKS);
-    const description = a.flag("--description") ?? (job.task && Array.isArray(job.criteria) && ctx.plainDescription ? ctx.plainDescription(job.task, job.criteria) : undefined);
-    if (!description) throw new Error('--description "<what to do, max 512 ASCII characters>" is required (or task and criteria in job.json)');
+    const committed = !a.flag("--description") && job.task && Array.isArray(job.criteria) && job.criteria.length > 0;
+    if (!a.flag("--description") && !committed) throw new Error('--description "<what to do, max 512 ASCII characters>" is required (or task and criteria in job.json)');
     const fund = !a.has("--no-fund");
     const w = await signer(ctx, a, { spendingPolicy: policyFor(asset, budget), funds: fund ? fundsFor(asset, budget, "the create and fund transactions") : { stx: 0.02, purpose: "the create-job transaction" } });
+    // Task and criteria go on-chain in the description with their commitment, so Nayori's evaluator can judge the delivery.
+    const description = committed
+      ? await committedDescription(ctx, { asset, client: w.address, evaluator, task: job.task, criteria: job.criteria })
+      : a.flag("--description");
+    if (description.length > 512 || !/^[\x20-\x7e\n]*$/.test(description)) throw new Error(`the description must be at most 512 ASCII characters (it has ${description.length}); shorten the task or criteria`);
     const fee = quoteNayoriNextFee(budget);
-    ctx.step?.(`CREATE ${fund ? "AND FUND " : ""}A NEXT-GENERATION ${asset.toUpperCase()} JOB. Wallet "${w.name}".`);
+    ctx.step?.(`CREATE ${fund ? "AND FUND " : ""}AN ${asset.toUpperCase()} JOB. Wallet "${w.name}".`);
     ctx.say(`budget ${budget} ${units(asset)} (provider ${fee.net}, treasury fee ${fee.fee} on settlement), delivery ${deliveryBlocks} and review ${reviewBlocks} Bitcoin blocks`, `evaluator ${evaluator}`);
     const created = await w.nayori.createJob({ asset, evaluator, budget, deliveryBlocks, reviewBlocks, description, client: w.address });
     const c = await ctx.confirm(w.nayori, created, "create-job");
@@ -367,7 +437,7 @@ export const NEXT_COMMANDS = {
     if (fund) {
       const funded = await w.nayori.fundJob(asset, id);
       await ctx.confirm(w.nayori, funded, "fund-job");
-    } else ctx.say(`next: nayori fund --generation next --wallet ${w.name} --job ${id}${asset === "stx" ? " --asset stx" : ""}`);
+    } else ctx.say(`next: nayori fund --wallet ${w.name} --job ${id}${asset === "stx" ? " --asset stx" : ""}`);
     const provider = a.flag("--provider");
     if (provider && fund) {
       const named = await w.nayori.nameProvider(asset, id, provider);
@@ -394,7 +464,7 @@ export const NEXT_COMMANDS = {
     const w = await signer(ctx, a);
     const receipt = await w.nayori.nameProvider(asset, id, provider);
     await ctx.confirm(w.nayori, receipt, "name-provider");
-    ctx.say(`offered to ${provider}; it accepts with: nayori accept --generation next --wallet <provider> --job ${id}`);
+    ctx.say(`offered to ${provider}; it accepts with: nayori accept --wallet <provider> --job ${id}`);
     return { asset, id };
   },
   accept: async (ctx, a) => {
@@ -411,11 +481,69 @@ export const NEXT_COMMANDS = {
   submit: async (ctx, a) => {
     const asset = parseAsset(a.flag("--asset"));
     const id = parseJobId(a.flag("--job"));
-    const deliverable = deliverableFrom(a.flag, ctx.readFile);
+    const job = await requireJob(ctx, asset, id);
+    const evaluated = a.flag("--url") || (a.flag("--file") && hasCommittedCriteria(ctx, job.description));
     const w = await signer(ctx, a);
+    if (evaluated) {
+      // A job with committed criteria: publish the deliverable, commit its hash, save the request for the evaluator.
+      const { deliverable, evidence, parsed } = await evidenceSubmission(ctx, a, { asset, id, job, provider: w.address });
+      const receipt = await w.nayori.submitWork({ asset, jobId: id, deliverable });
+      await ctx.confirm(w.nayori, receipt, "submit-work");
+      saveEvaluationEvidence(ctx, asset, id, { evidence, criteria: parsed.criteria });
+      if (!a.has("--no-evaluate")) return NEXT_COMMANDS["request-evaluation"](ctx, a);
+      ctx.say(`next: ask Nayori's evaluator (no wallet needed): nayori evaluate --job ${id}${asset === "stx" ? " --asset stx" : ""}`);
+      return { asset, id };
+    }
+    const deliverable = deliverableFrom(a.flag, ctx.readFile);
     ctx.say(`deliverable on-chain: ${deliverable.shown}`);
     const receipt = await w.nayori.submitWork({ asset, jobId: id, deliverable: deliverable.value });
     await ctx.confirm(w.nayori, receipt, "submit-work");
+    return { asset, id };
+  },
+  "request-evaluation": async (ctx, a) => {
+    const asset = parseAsset(a.flag("--asset"));
+    const id = parseJobId(a.flag("--job"));
+    const path = evidencePath(ctx, asset, id);
+    if (!existsSync(path)) throw new Error(`no saved evidence for ${asset} job #${id}; deliver first: nayori deliver --wallet <provider> --job ${id} --file <deliverable.txt> --url <published>`);
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    const job = await requireJob(ctx, asset, id);
+    if (job.status !== "submitted") { ctx.say(`${asset} job #${id} is ${job.status}; nothing to request`); return { asset, id }; }
+    const submission = await ctx.reader.getSubmission(asset, id);
+    const body = await evaluationRequestBody(ctx, { asset, id, job, submission, ...saved });
+    ctx.step?.("ASK NAYORI'S EVALUATOR. No key, no signature: it recomputes every hash against the chain.");
+    const res = await (ctx.fetch ?? fetch)(ctx.relay, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) }).catch(() => null);
+    ctx.say(`POST ${ctx.relay} -> ${res ? `HTTP ${res.status}` : "no answer yet (the evaluator may still admit it)"} (evaluation ${body.evaluationId})`);
+    if (res && !res.ok) {
+      const answer = await res.text().catch(() => "");
+      if (answer) ctx.say(`evaluator answered: ${answer.slice(0, 300)}`);
+    }
+    if (a.has("--no-wait") || !ctx.waitFor) return { asset, id };
+    const deadline = submission.reviewDeadline;
+    const decision = await ctx.waitFor("waiting for the decision on-chain", async () => {
+      const d = await ctx.reader.getDecision(asset, id);
+      if (d) return d;
+      if ((await ctx.tip().catch(() => 0n)) > deadline) return { timedOut: true };
+      return null;
+    }, 15_000, 60);
+    const suffix = asset === "stx" ? " --asset stx" : "";
+    if (decision.timedOut) ctx.say(`no decision before Bitcoin block ${deadline}: the job is approved by default (the keeper records it, or: nayori default-approval --wallet <any> --job ${id}${suffix})`);
+    else ctx.say(`decision: ${decision.decision.toUpperCase()}; the losing side may appeal until Bitcoin block ${decision.appealDeadline}, then anyone settles: nayori settle --wallet <any> --job ${id}${suffix}`);
+    return { asset, id };
+  },
+  wait: async (ctx, a) => {
+    const asset = parseAsset(a.flag("--asset"));
+    const name = a.wallet();
+    const address = await ctx.actor(name).signer.getAddress();
+    const only = a.flag("--job") ? parseJobId(a.flag("--job")) : null;
+    const offered = (j) => j && j.provider === address && j.status === "offered";
+    ctx.step?.(`WAIT TO BE HIRED. Give this address to a client: ${address}`);
+    const id = await ctx.waitFor(`waiting for a ${asset} job offered to ${address}`, async () => {
+      if (only) return offered(await ctx.reader.getJob(asset, only)) ? only : null;
+      const n = await ctx.reader.getJobCount(asset);
+      for (let k = n; k >= 1n && k > n - 25n; k--) if (offered(await ctx.reader.getJob(asset, k))) return k;
+      return null;
+    });
+    ctx.say(`${asset} job #${id} is offered to you: nayori accept --wallet ${name} --job ${id}${asset === "stx" ? " --asset stx" : ""}`);
     return { asset, id };
   },
   decide: async (ctx, a) => {
@@ -537,7 +665,7 @@ export const NEXT_COMMANDS = {
     if (nameFlag === undefined && uriFlag === undefined) throw new Error('--name "<agent name>" and/or --uri <url> is required');
     const w = await signer(ctx, a);
     const agent = await ctx.reader.getAgent(w.address);
-    if (!agent) throw new Error(`wallet ${w.address} has no agent in nayori-agents yet; register first: nayori register --generation next --wallet ${w.name} --name "..."`);
+    if (!agent) throw new Error(`wallet ${w.address} has no agent in nayori-agents yet; register first: nayori register --wallet ${w.name} --name "..."`);
     const name = nameFlag ?? agent.name;
     const uri = uriFlag ?? agent.uri;
     checkAgentFields(name, uri);
@@ -570,7 +698,7 @@ export const NEXT_COMMANDS = {
     if (w.address !== holder) throw new Error(`only the current ${role} (${holder}) can propose a handover, not wallet "${w.name}"`);
     const receipt = await w.nayori.proposeHandover({ role, candidate });
     await ctx.confirm(w.nayori, receipt, "propose-handover");
-    ctx.say(`${candidate} can accept the ${role} role after ${NAYORI_NEXT_LIMITS.handoverDelayBlocks} Bitcoin blocks: nayori accept-handover --generation next --wallet <candidate> --role ${a.flag("--role")}`);
+    ctx.say(`${candidate} can accept the ${role} role after ${NAYORI_NEXT_LIMITS.handoverDelayBlocks} Bitcoin blocks: nayori accept-handover --wallet <candidate> --role ${a.flag("--role")}`);
     return { role, candidate };
   },
   "cancel-handover": async (ctx, a) => {
@@ -602,7 +730,7 @@ export const NEXT_COMMANDS = {
     const { job, submission, decision } = state;
     if (!job) throw new Error(`${asset} job #${id} not found`);
     const escrow = await ctx.reader.getEscrowBalance(asset, id);
-    ctx.say(`${asset} job #${id} (next generation): ${job.status} | budget ${job.budget} ${units(asset)} | escrow ${escrow}`,
+    ctx.say(`${asset} job #${id}: ${job.status} | budget ${job.budget} ${units(asset)} | escrow ${escrow}`,
       `client ${job.client}`, `provider ${job.provider ?? "(none yet)"}`, `evaluator ${job.evaluator}`,
       `deadline ${job.deliveryDeadline} | review ${job.reviewBlocks} blocks | Bitcoin block now ${tip}`, `description: ${job.description}`);
     if (submission) ctx.say(`submitted; review deadline ${submission.reviewDeadline}`);
@@ -621,16 +749,16 @@ export const NEXT_ALIASES = { hire: "name-provider", deliver: "submit", evaluate
 
 /** Runs a next-generation command (not the keeper, which nayori.mjs loops). */
 export async function runNextCommand(cmd, ctx, a) {
-  const name = NEXT_ALIASES[cmd] ?? cmd;
+  const name = cmd === "evaluate" && !a.flag("--wallet") ? "request-evaluation" : NEXT_ALIASES[cmd] ?? cmd;
   const fn = NEXT_COMMANDS[name];
-  if (!fn) throw new Error(`"${cmd}" is not a next-generation command. Next-generation commands: ${Object.keys(NEXT_COMMANDS).join(", ")}, keeper`);
+  if (!fn) throw new Error(`"${cmd}" is not a Nayori job command. Job commands: ${Object.keys(NEXT_COMMANDS).join(", ")}, keeper`);
   return fn(ctx, a);
 }
 
 // ---------- the real context (network, wallets) ----------
 
 /** Wires the SDK client, the wallet store and the Hiro API. `N` is lib.mjs. */
-export function makeNextContext(N, { deployer, env = process.env } = {}) {
+export function makeNextContext(N, { deployer, outDir, env = process.env } = {}) {
   const network = N.NETWORK;
   const config = nextConfig({ network, deployer });
   requireDeployed(config);
@@ -647,6 +775,13 @@ export function makeNextContext(N, { deployer, env = process.env } = {}) {
     step: N.step,
     requireFunds: N.requireFunds,
     plainDescription: N.plainDescription,
+    toAcceptanceCriteria: N.toAcceptanceCriteria,
+    parseJobDescription: N.parseJobDescription,
+    defaultEvaluator: N.EVALUATOR,
+    relay: N.P.relay,
+    outDir,
+    waitFor: N.waitFor,
+    ask: N.ask,
     readFile: readFileSync,
     async confirm(nayori, receipt, label) {
       N.say(`${label} broadcast, waiting for the Stacks block...`);

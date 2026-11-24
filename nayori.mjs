@@ -5,46 +5,32 @@
 //   nayori wallet import [name] [--account N]   # an existing wallet, from its secret words (hidden prompt)
 //   nayori wallet list | show <name>            # every wallet created or imported here, with balances
 //
-//   nayori create-job --wallet <client> [job.json]            # create + budget + fund
-//   nayori hire       --wallet <client> --job <id> --provider <SP...>
-//   nayori register   --wallet <agent>  [--name "..."] [--new]
-//   nayori deliver    --wallet <agent>  --job <id> --file <deliverable.txt> [--url <published>]
-//   nayori evaluate   --job <id>                              # no wallet: asks the evaluator
-//   nayori finalize   --wallet <any>    --job <id>            # after the appeal window
-//   nayori settle     --wallet <any>    --job <id>            # no decision within the review window: pay the provider
-//   nayori keeper     --wallet <any>  [--every 600] [--dry-run]   # settle every job that is due, once or on a loop
+//   nayori create-job --wallet <client> [job.json] [--asset sbtc|stx] [--budget <n>] [--provider <SP...>]
+//                     # task + criteria from job.json go on-chain with their commitment; Nayori's evaluator judges the work
+//   nayori hire       --wallet <client>   --job <id> --provider <SP...>      # offer the job to an agent
+//   nayori wait       --wallet <agent>    [--job <id>]                        # block until a job is offered to you
+//   nayori accept     --wallet <agent>    --job <id>                          # the delivery window starts now
+//   nayori deliver    --wallet <agent>    --job <id> --file <deliverable.txt> --url <published copy>
+//   nayori evaluate   --job <id>                                              # no wallet: asks Nayori's evaluator
+//   nayori appeal     --wallet <losing side> --job <id> --evidence-hash <hex> | --evidence-file <path>
+//   nayori settle     --wallet <any>      --job <id>                          # after the appeal window: the escrow pays out
+//   nayori rate       --wallet <client>   --job <id> --score 1..5
+//   nayori register   --wallet <agent>    --name "..." [--uri <url>]   |   update-agent
+//   nayori apply | withdraw --wallet <agent> --job <id> [--deposit <sats>]   # optional application list (sBTC jobs)
+//   nayori keeper     --wallet <any> [--every 600] [--dry-run]             # default approvals, settlements, refunds, deposit releases
 //   nayori status     --job <id>
-//   nayori --version                            # print the CLI version
-//   nayori wait       --wallet <agent>  [--job <id>]          # block until a client hires you
 //   nayori attest     --wallet <name> | --address <SP...>   [--handle <you> --roles client,provider,agent-owner]
-//                                     # register yourself: a short wizard, the wallet signs, the entry is listed on Nayori
+//                     # register yourself: a short wizard, the wallet signs, the entry is listed on Nayori
+//   nayori --version
 //
-// Next contract generation (UPCOMING, NOT DEPLOYED YET): add --generation next (or NAYORI_GENERATION=next)
-// and the deployer with --deployer <address> (or NAYORI_NEXT_DEPLOYER). --asset sbtc|stx (default sbtc).
-//   nayori create-job --generation next --wallet <client> --evaluator <SP...> --budget <n> --description "..."
-//                     [--delivery-blocks 144] [--review-blocks 144] [--provider <SP...>] [--no-fund]
-//   nayori fund | accept | default-approval | settle | refund | close   --generation next --wallet <w> --job <id>
-//   nayori name-provider --generation next --wallet <client> --job <id> --provider <SP...>
-//   nayori submit     --generation next --wallet <provider> --job <id> --deliverable "<64 chars>" | --file <path>
-//   nayori decide     --generation next --wallet <evaluator> --job <id> --decision approve|reject --evidence-hash <hex> | --evidence-file <path>
-//   nayori appeal     --generation next --wallet <losing side> --job <id> --evidence-hash <hex> | --evidence-file <path>
-//   nayori resolve-appeal --generation next --wallet <authority> --job <id> --decision approve|reject --resolution-hash <hex> | --resolution-file <path>
-//   nayori rate       --generation next --wallet <client> --job <id> --score 1..5
-//   nayori register   --generation next --wallet <agent> --name "..." [--uri <url>]
-//   nayori update-agent --generation next --wallet <agent> [--name "..."] [--uri <url>]   # change the agent's name or uri
-//   nayori retry-reputation --generation next --wallet <any> --job <id>   # replay an outcome the registry did not take
-//   nayori propose-handover --generation next --wallet <holder> --role treasury|authority --candidate <SP...>
-//   nayori cancel-handover | accept-handover  --generation next --wallet <holder|candidate> --role treasury|authority
-//                     # role handovers are always signed directly by the holder or the candidate, never through a helper
-//   nayori apply      --generation next --wallet <agent> --job <id> --deposit <sats>
-//   nayori withdraw   --generation next --wallet <agent> --job <id>
-//   nayori decline | release  --generation next --wallet <w> --job <id> --applicant <SP...>
-//   nayori allow-caller | disallow-caller  --generation next --wallet <w> --caller <SP...contract> --target escrowSbtc|escrowStx|agents|applications [--until <block>]
-//   nayori status     --generation next --job <id>
-//   nayori keeper     --generation next --wallet <any> [--every 600] [--dry-run]   # default approvals, settlements, refunds, closes, deposit releases, reputation retries
+// Every job command uses the Nayori contracts live since 2026-11-24 (--asset sbtc|stx, default sbtc).
+// More: fund, name-provider, decide, default-approval, refund, close, resolve-appeal, retry-reputation,
+// decline, release, allow-caller, disallow-caller, propose-handover, cancel-handover, accept-handover.
+// Jobs created on the earlier contracts: add --generation current (or NAYORI_GENERATION=current).
+// --deployer <address> (or NAYORI_NEXT_DEPLOYER) targets another deployment, such as a local devnet.
 //
 // Wallets live in ~/.nayori/wallets/<name>.env (mode 0600). Keys are read only when signing.
-// NAYORI_NETWORK=testnet switches every command to the QA contracts.
+// NAYORI_NETWORK=testnet switches every command to testnet.
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -68,11 +54,11 @@ const loadJob = () => { const f = positional.find((a) => a.endsWith(".json")) ??
 async function main() {
   if (cmd === "--version" || cmd === "-v" || cmd === "version") { console.log(JSON.parse(readFileSync(join(HERE, "package.json"), "utf8")).version); return; }
   const generation = X.generationOf(flag("--generation"));
-  console.log(`Nayori SDK demo  |  @perkos/agent-sdk  |  Stacks ${N.NETWORK}${generation === "next" ? "  |  next contracts" : ""}  |  ${new Date().toISOString().slice(0, 16)}Z`);
+  console.log(`Nayori CLI  |  @perkos/agent-sdk  |  Stacks ${N.NETWORK}${generation === "current" ? "  |  earlier contracts" : ""}  |  ${new Date().toISOString().slice(0, 16)}Z`);
   const nextVerb = cmd === "keeper" || cmd in X.NEXT_COMMANDS || cmd in X.NEXT_ALIASES;
   if (generation === "next" && nextVerb) return nextMain();
-  if (generation === "current" && cmd in X.NEXT_COMMANDS && !["create-job", "register", "settle", "status"].includes(cmd))
-    throw new Error(`"${cmd}" belongs to the next contract generation (not deployed yet): add --generation next --deployer <address>`);
+  if (generation === "current" && cmd in X.NEXT_COMMANDS && !["create-job", "register", "settle", "status", "wait"].includes(cmd))
+    throw new Error(`"${cmd}" exists only on the current Nayori contracts; drop --generation current (or NAYORI_GENERATION=current)`);
   switch (cmd) {
     case "wallet": {
       if (sub === "generate" || sub === "create") {
@@ -257,8 +243,8 @@ async function main() {
 
 /** The next contract generation: same flags style, its own contracts (see next.mjs). */
 async function nextMain() {
-  const ctx = X.makeNextContext(N, { deployer: X.nextDeployer(flag("--deployer")) });
-  N.say(`next contracts by ${ctx.config.contracts.escrowSbtc.split(".")[0]}`);
+  const ctx = X.makeNextContext(N, { deployer: X.nextDeployer(flag("--deployer")), outDir: OUT });
+  N.say(`Nayori contracts by ${ctx.config.contracts.escrowSbtc.split(".")[0]}`);
   if (cmd !== "keeper") {
     const jobFile = () => { const f = positional.find((a) => a.endsWith(".json")) ?? (existsSync(resolve("job.json")) ? "job.json" : null); return f ? JSON.parse(readFileSync(resolve(f), "utf8")) : {}; };
     const result = await X.runNextCommand(cmd, ctx, { flag, has, wallet: needWallet, jobFile });

@@ -5,6 +5,7 @@ import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as X from "../next.mjs";
+import * as N from "../lib.mjs";
 
 const DEPLOYER = "ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM";
 const CLIENT = "ST1SJ3DTE5DN7X54YDH5D64R3BCB6A2AG2ZQ8YPD5";
@@ -66,27 +67,29 @@ const args = (flags, has = []) => ({ flag: (n) => flags[n], has: (n) => has.incl
 
 // ---------- selection ----------
 
-test("generation defaults to current and accepts next from the flag or the env", () => {
-  assert.equal(X.generationOf(undefined, {}), "current");
-  assert.equal(X.generationOf("next", {}), "next");
-  assert.equal(X.generationOf(undefined, { NAYORI_GENERATION: "NEXT" }), "next");
+test("generation defaults to next and reaches the earlier contracts with current", () => {
+  assert.equal(X.generationOf(undefined, {}), "next");
+  assert.equal(X.generationOf("current", {}), "current");
+  assert.equal(X.generationOf(undefined, { NAYORI_GENERATION: "CURRENT" }), "current");
   assert.throws(() => X.generationOf("v2", {}), /must be "current" or "next"/);
 });
 
-test("without a deployer the next generation is not deployed and commands refuse to run", () => {
+test("without a deployer the live deployment of the network is used; --deployer targets another", () => {
   assert.equal(X.nextDeployer(undefined, {}), undefined);
   assert.equal(X.nextDeployer(undefined, { NAYORI_NEXT_DEPLOYER: DEPLOYER }), DEPLOYER);
-  const placeholder = X.nextConfig({ network: "mainnet" });
-  assert.equal(placeholder.deployed, false);
-  assert.throws(() => X.requireDeployed(placeholder), /not deployed on mainnet yet/);
-  assert.equal(config.deployed, true);
+  const live = X.nextConfig({ network: "mainnet" });
+  assert.equal(live.contracts.escrowSbtc, "SP2BM4WCNQM286PFHPGA1BG2YXER0PCG1PKQ5MF1X.nayori-escrow-sbtc");
+  assert.equal(X.nextConfig({ network: "testnet" }).contracts.escrowStx, "ST3MRPNX0VNWYRSJ07PNTASE5BZ9K5XE57ARZ39DY.nayori-escrow-stx");
+  X.requireDeployed(live);
   assert.equal(config.contracts.escrowSbtc, `${DEPLOYER}.nayori-escrow-sbtc`);
   X.requireDeployed(config);
 });
 
-test("the CLI's makeNextContext refuses a missing deployer", () => {
-  const N = { NETWORK: "mainnet" };
-  assert.throws(() => X.makeNextContext(N, {}), /not deployed on mainnet yet/);
+test("the CLI's makeNextContext uses the live deployment and the managed evaluator", () => {
+  const ctx = X.makeNextContext({ NETWORK: "mainnet", EVALUATOR: "SP3GRG5CKEFNYM5BV0NPPHCM51FT176JQ02QWQ9T3", P: { relay: "https://app.nayori.ai/api/evaluations" } }, { outDir: "/tmp/x" });
+  assert.equal(ctx.config.contracts.escrowSbtc, "SP2BM4WCNQM286PFHPGA1BG2YXER0PCG1PKQ5MF1X.nayori-escrow-sbtc");
+  assert.equal(ctx.defaultEvaluator, "SP3GRG5CKEFNYM5BV0NPPHCM51FT176JQ02QWQ9T3");
+  assert.equal(ctx.relay, "https://app.nayori.ai/api/evaluations");
 });
 
 // ---------- keeper rules (mirror the contract checks) ----------
@@ -292,7 +295,7 @@ test("accept checks the offer is for the signing wallet", async () => {
 });
 
 test("submit --file puts the file's sha256 on-chain; hashes and deliverables are validated", async () => {
-  const ctx = ctxWith(fakeReader());
+  const ctx = ctxWith(fakeReader({ sbtc: [job(1, "accepted")] }));
   await X.runNextCommand("submit", ctx, args({ "--job": "1", "--file": "out.txt" }));
   const value = ctx.wallet.calls[0][1].deliverable;
   assert.equal(Buffer.from(value).toString("hex"), X.sha256(Buffer.from("hello")).toString("hex"));
@@ -336,7 +339,7 @@ test("status reports what is due next", async () => {
 });
 
 test("unknown commands and contract errors are explained", async () => {
-  await assert.rejects(X.runNextCommand("wallet", ctxWith(fakeReader()), args({})), /not a next-generation command/);
+  await assert.rejects(X.runNextCommand("wallet", ctxWith(fakeReader()), args({})), /not a Nayori job command/);
   assert.match(X.explainResult("(err u314)"), /ERR_TOO_EARLY/);
   assert.equal(X.createdJobId("(ok u12)"), 12n);
   assert.equal(X.createdJobId("(err u308)"), null);
@@ -464,4 +467,54 @@ test("a failed pending-reputation read drops only the retry, not the deposit rel
   const { due } = await X.planNextKeeper(reader, { tip: 2_000n, onError: (asset, id, e) => errors.push(`${asset}#${id}: ${e.message}`) });
   assert.deepEqual(due.map((d) => d.action), ["release"]);
   assert.deepEqual(errors, ["sbtc#1: HTTP 429"]);
+});
+
+// ---------- evaluated jobs: committed criteria, published evidence, Nayori's evaluator ----------
+
+test("create-job, deliver and evaluate: criteria committed on-chain, evidence verified, request built for the evaluator", async () => {
+  const out = mkdtempSync(join(tmpdir(), "nayori-next-eval-"));
+  const evaluated = (reader, extra = {}) => ({ ...ctxWith(reader, extra), outDir: out, defaultEvaluator: EVALUATOR, relay: "https://relay.test/api/evaluations",
+    toAcceptanceCriteria: N.toAcceptanceCriteria, parseJobDescription: N.parseJobDescription, plainDescription: N.plainDescription });
+  // create-job from job.json: no --evaluator means Nayori's evaluator, and the description carries the commitment
+  const client = evaluated(fakeReader(), { wallet: fakeWallet(CLIENT) });
+  const jobFile = { task: "Write a haiku about Bitcoin", criteria: ["Three lines", "Mentions blocks"] };
+  await X.runNextCommand("create-job", client, { ...args({ "--budget": "10000" }, ["--no-fund"]), jobFile: () => jobFile });
+  const [, created] = client.wallet.calls[0];
+  assert.equal(created.evaluator, EVALUATOR);
+  const parsed = N.parseJobDescription(created.description);
+  assert.deepEqual(parsed.criteria, jobFile.criteria);
+  // deliver: the published copy must match the file; the 36-byte commitment goes on-chain
+  const onChain = job(1, "accepted", { description: created.description });
+  const published = { ok: true, status: 200, headers: new Map([["content-type", "text/plain"]]), arrayBuffer: async () => new TextEncoder().encode("hello").buffer };
+  published.headers.get = published.headers.get.bind(published.headers);
+  const provider = { ...evaluated(fakeReader({ sbtc: [onChain] }), { wallet: fakeWallet(PROVIDER) }), fetch: async () => published };
+  await X.runNextCommand("deliver", provider, args({ "--job": "1", "--file": "out.txt", "--url": "https://gist.githubusercontent.com/x/raw/out.txt" }));
+  const submitted = provider.wallet.calls[0][1].deliverable;
+  assert.equal(submitted.length, 36);
+  assert.ok(existsSync(X.evidencePath(provider, "sbtc", 1n)));
+  // a published copy that differs is refused before anything is signed
+  const wrong = { ...provider, wallet: fakeWallet(PROVIDER), fetch: async () => ({ ...published, arrayBuffer: async () => new TextEncoder().encode("other").buffer }) };
+  await assert.rejects(X.runNextCommand("deliver", wrong, args({ "--job": "1", "--file": "out.txt", "--url": "https://gist.githubusercontent.com/x/raw/out.txt" })), /does not match/);
+  assert.equal(wrong.wallet.calls.length, 0);
+  // evaluate without a wallet asks the evaluator with a request bound to the next escrow
+  const posted = [];
+  const asker = { ...evaluated(fakeReader({ sbtc: [{ ...onChain, status: "submitted" }], submissions: { "sbtc:1": { reviewDeadline: 2_500n } } })),
+    fetch: async (url, init) => { posted.push([url, JSON.parse(init.body)]); return { ok: true, status: 202, text: async () => "" }; } };
+  await X.runNextCommand("evaluate", asker, args({ "--job": "1" }, ["--no-wait"]));
+  const [url, body] = posted[0];
+  assert.equal(url, "https://relay.test/api/evaluations");
+  assert.equal(body.contract, `${DEPLOYER}.nayori-escrow-sbtc`);
+  assert.equal(body.job.reviewDeadlineBurn, "2500");
+  assert.equal(body.job.description, created.description);
+  assert.equal(body.acceptanceCriteria.length, 2);
+  assert.equal(body.evidence[0].uri, "https://gist.githubusercontent.com/x/raw/out.txt");
+  // with a wallet, evaluate stays the evaluator's own decide
+  await assert.rejects(X.runNextCommand("evaluate", asker, args({ "--job": "1", "--wallet": "e", "--decision": "maybe", "--evidence-hash": "ab".repeat(32) })), /approve" or "reject/);
+});
+
+test("wait returns the job offered to the wallet", async () => {
+  const reader = fakeReader({ sbtc: [job(1, "funded", { provider: undefined }), job(2, "offered")] });
+  const ctx = { ...ctxWith(reader, { wallet: fakeWallet(PROVIDER) }), waitFor: async (_label, poll) => poll() };
+  const result = await X.runNextCommand("wait", ctx, args({}));
+  assert.equal(result.id, 2n);
 });

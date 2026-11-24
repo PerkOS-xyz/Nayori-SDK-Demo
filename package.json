@@ -45,7 +45,7 @@
     "check": "node --check nayori.mjs && node --check lib.mjs && node --check next.mjs && node --check run-job.mjs"
   },
   "dependencies": {
-    "@perkos/agent-sdk": "file:../PerkOS-Nayori-Agent-SDK-next",
+    "@perkos/agent-sdk": "0.10.0",
     "@stacks/wallet-sdk": "^7.6.0"
   }
 }
